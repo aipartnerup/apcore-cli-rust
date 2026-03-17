@@ -79,6 +79,73 @@ pub fn resolve_refs(
 }
 
 // ---------------------------------------------------------------------------
+// Composition helpers
+// ---------------------------------------------------------------------------
+
+/// Merge all branches for allOf: union properties (later wins on conflict),
+/// concatenate required arrays.
+fn merge_allof(branches: Vec<Value>) -> Value {
+    let mut merged_props = Map::new();
+    let mut merged_required: Vec<Value> = Vec::new();
+
+    for branch in branches {
+        if let Some(props) = branch.get("properties").and_then(|v| v.as_object()) {
+            for (k, v) in props {
+                merged_props.insert(k.clone(), v.clone());
+            }
+        }
+        if let Some(req) = branch.get("required").and_then(|v| v.as_array()) {
+            merged_required.extend(req.iter().cloned());
+        }
+    }
+
+    let mut result = Map::new();
+    result.insert("properties".to_string(), Value::Object(merged_props));
+    result.insert("required".to_string(), Value::Array(merged_required));
+    Value::Object(result)
+}
+
+/// Compute the intersection of required field sets across branches.
+fn intersect_required_sets(sets: Vec<HashSet<String>>) -> Vec<Value> {
+    if sets.is_empty() {
+        return Vec::new();
+    }
+    let mut iter = sets.into_iter();
+    let first = iter.next().unwrap();
+    iter.fold(first, |acc, set| acc.intersection(&set).cloned().collect())
+        .into_iter()
+        .map(Value::String)
+        .collect()
+}
+
+/// Merge all branches for anyOf/oneOf: union properties, required = intersection.
+fn merge_anyof(branches: Vec<Value>) -> Value {
+    let mut merged_props = Map::new();
+    let mut all_required_sets: Vec<HashSet<String>> = Vec::new();
+
+    for branch in branches {
+        if let Some(props) = branch.get("properties").and_then(|v| v.as_object()) {
+            for (k, v) in props {
+                merged_props.insert(k.clone(), v.clone());
+            }
+        }
+        let set: HashSet<String> = branch
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        all_required_sets.push(set);
+    }
+
+    let intersection = intersect_required_sets(all_required_sets);
+
+    let mut result = Map::new();
+    result.insert("properties".to_string(), Value::Object(merged_props));
+    result.insert("required".to_string(), Value::Array(intersection));
+    Value::Object(result)
+}
+
+// ---------------------------------------------------------------------------
 // resolve_node (private helper)
 // ---------------------------------------------------------------------------
 
@@ -113,7 +180,7 @@ fn resolve_node(
         }
 
         // Extract key: "#/$defs/Address" → "Address"
-        let key = ref_path.split('/').last().unwrap_or("").to_string();
+        let key = ref_path.split('/').next_back().unwrap_or("").to_string();
 
         let def = defs.get(&key).cloned().ok_or_else(|| RefResolverError::Unresolvable {
             reference: ref_path.clone(),
@@ -129,6 +196,69 @@ fn resolve_node(
         // we must remove the entry after resolving so they don't block each other.
         visiting.remove(&ref_path);
         return Ok(result);
+    }
+
+    // Handle allOf: merge properties (later wins), concatenate required.
+    if obj.contains_key("allOf") {
+        let sub_schemas = obj
+            .get("allOf")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        // Resolve each branch first (handles nested $refs).
+        let mut resolved_branches = Vec::with_capacity(sub_schemas.len());
+        for sub in sub_schemas {
+            let resolved_sub = resolve_node(sub, defs, depth + 1, max_depth, visiting, module_id)?;
+            resolved_branches.push(resolved_sub);
+        }
+
+        let merged = merge_allof(resolved_branches);
+        let merged_map = match merged {
+            Value::Object(m) => m,
+            _ => Map::new(),
+        };
+
+        // Carry over non-composition keys from the parent node.
+        let mut result_map = merged_map;
+        for (k, v) in &obj {
+            if k != "allOf" && !result_map.contains_key(k) {
+                result_map.insert(k.clone(), v.clone());
+            }
+        }
+        return Ok(Value::Object(result_map));
+    }
+
+    // Handle anyOf / oneOf (same merge logic, intersection of required).
+    for keyword in &["anyOf", "oneOf"] {
+        if obj.contains_key(*keyword) {
+            let sub_schemas = obj
+                .get(*keyword)
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut resolved_branches = Vec::with_capacity(sub_schemas.len());
+            for sub in sub_schemas {
+                let resolved_sub =
+                    resolve_node(sub, defs, depth + 1, max_depth, visiting, module_id)?;
+                resolved_branches.push(resolved_sub);
+            }
+
+            let merged = merge_anyof(resolved_branches);
+            let merged_map = match merged {
+                Value::Object(m) => m,
+                _ => Map::new(),
+            };
+
+            let mut result_map = merged_map;
+            for (k, v) in &obj {
+                if k != *keyword && !result_map.contains_key(k) {
+                    result_map.insert(k.clone(), v.clone());
+                }
+            }
+            return Ok(Value::Object(result_map));
+        }
     }
 
     // Recursively resolve all values in the object map.
@@ -315,5 +445,146 @@ mod tests {
         let resolved = result.unwrap();
         assert_eq!(resolved["properties"]["a"]["type"], "string");
         assert_eq!(resolved["properties"]["b"]["type"], "string");
+    }
+
+    // --- Schema composition tests ---
+
+    #[test]
+    fn test_allof_merges_properties() {
+        let mut schema = json!({
+            "allOf": [
+                {
+                    "properties": {"a": {"type": "string"}},
+                    "required": ["a"]
+                },
+                {
+                    "properties": {"b": {"type": "integer"}},
+                    "required": ["b"]
+                }
+            ]
+        });
+        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        assert_eq!(result["properties"]["a"]["type"], "string");
+        assert_eq!(result["properties"]["b"]["type"], "integer");
+        let required: Vec<&str> = result["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(required.contains(&"a"));
+        assert!(required.contains(&"b"));
+    }
+
+    #[test]
+    fn test_allof_later_schema_wins_on_conflict() {
+        let mut schema = json!({
+            "allOf": [
+                {"properties": {"x": {"type": "string"}}},
+                {"properties": {"x": {"type": "integer"}}}
+            ]
+        });
+        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        // Later sub-schema wins: x must be integer.
+        assert_eq!(result["properties"]["x"]["type"], "integer");
+    }
+
+    #[test]
+    fn test_allof_copies_non_composition_keys() {
+        let mut schema = json!({
+            "description": "My type",
+            "allOf": [
+                {"properties": {"a": {"type": "string"}}}
+            ]
+        });
+        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        // "description" must survive in the merged result.
+        assert_eq!(result["description"], "My type");
+    }
+
+    #[test]
+    fn test_anyof_unions_properties() {
+        let mut schema = json!({
+            "anyOf": [
+                {"properties": {"a": {"type": "string"}}, "required": ["a"]},
+                {"properties": {"b": {"type": "integer"}}, "required": ["b"]}
+            ]
+        });
+        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        // Both properties must appear.
+        assert!(result["properties"].get("a").is_some());
+        assert!(result["properties"].get("b").is_some());
+    }
+
+    #[test]
+    fn test_anyof_required_is_intersection() {
+        let mut schema = json!({
+            "anyOf": [
+                {"properties": {"a": {"type": "string"}, "b": {"type": "string"}}, "required": ["a", "b"]},
+                {"properties": {"a": {"type": "string"}, "c": {"type": "string"}}, "required": ["a", "c"]}
+            ]
+        });
+        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let required: Vec<&str> = result["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        // Only "a" appears in both branches — it is the intersection.
+        assert!(required.contains(&"a"), "a must be required (in both branches)");
+        assert!(!required.contains(&"b"), "b must not be required (only in first branch)");
+        assert!(!required.contains(&"c"), "c must not be required (only in second branch)");
+    }
+
+    #[test]
+    fn test_anyof_empty_required_when_no_overlap() {
+        let mut schema = json!({
+            "anyOf": [
+                {"properties": {"a": {"type": "string"}}, "required": ["a"]},
+                {"properties": {"b": {"type": "integer"}}, "required": ["b"]}
+            ]
+        });
+        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let required = result["required"].as_array().unwrap();
+        assert!(required.is_empty(), "no fields are required in both branches");
+    }
+
+    #[test]
+    fn test_oneof_behaves_like_anyof() {
+        let mut schema = json!({
+            "oneOf": [
+                {"properties": {"x": {"type": "string"}}, "required": ["x"]},
+                {"properties": {"y": {"type": "integer"}}, "required": ["y"]}
+            ]
+        });
+        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        assert!(result["properties"].get("x").is_some());
+        assert!(result["properties"].get("y").is_some());
+        assert!(result["required"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_allof_with_nested_ref() {
+        // allOf sub-schema that itself contains a $ref.
+        let mut schema = json!({
+            "$defs": {
+                "Base": {"properties": {"id": {"type": "integer"}}, "required": ["id"]}
+            },
+            "allOf": [
+                {"$ref": "#/$defs/Base"},
+                {"properties": {"name": {"type": "string"}}}
+            ]
+        });
+        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        assert_eq!(result["properties"]["id"]["type"], "integer");
+        assert_eq!(result["properties"]["name"]["type"], "string");
+        let required: Vec<&str> = result["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(required.contains(&"id"));
     }
 }
