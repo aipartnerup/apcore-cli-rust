@@ -12,35 +12,15 @@ use thiserror::Error;
 use crate::security::AuditLogger;
 
 // ---------------------------------------------------------------------------
-// Local trait abstractions for Registry and Executor
+// Local trait abstractions for Executor
 // ---------------------------------------------------------------------------
-// apcore::Registry and apcore::Executor are concrete structs, not traits.
-// These local traits allow LazyModuleGroup to be generic over both the real
-// implementations and test mocks without depending on apcore internals.
-
-/// Minimal registry interface required by LazyModuleGroup.
-pub trait ModuleRegistry: Send + Sync {
-    /// Return the names of all registered modules.
-    fn list_modules(&self) -> Result<Vec<String>, String>;
-    /// Return the descriptor for a module by name, or None if not found.
-    fn get_module_descriptor(&self, name: &str) -> Option<apcore::registry::registry::ModuleDescriptor>;
-}
+// apcore::Executor is a concrete struct, not a trait.
+// This local trait allows LazyModuleGroup to be generic over both the real
+// implementation and test mocks without depending on apcore internals.
+// Registry access uses the unified `discovery::RegistryProvider` trait.
 
 /// Minimal executor interface required by LazyModuleGroup.
 pub trait ModuleExecutor: Send + Sync {}
-
-/// Adapter that implements ModuleRegistry for the real apcore::Registry.
-pub struct ApCoreRegistryAdapter(pub apcore::Registry);
-
-impl ModuleRegistry for ApCoreRegistryAdapter {
-    fn list_modules(&self) -> Result<Vec<String>, String> {
-        Ok(self.0.list(None, None).iter().map(|s| s.to_string()).collect())
-    }
-
-    fn get_module_descriptor(&self, name: &str) -> Option<apcore::registry::registry::ModuleDescriptor> {
-        self.0.get_definition(name).cloned()
-    }
-}
 
 /// Adapter that implements ModuleExecutor for the real apcore::Executor.
 pub struct ApCoreExecutorAdapter(pub apcore::Executor);
@@ -107,7 +87,8 @@ pub const BUILTIN_COMMANDS: &[&str] = &["completion", "describe", "exec", "list"
 /// This is the Rust equivalent of the Python `LazyModuleGroup` (Click group
 /// subclass with lazy `get_command` / `list_commands`).
 pub struct LazyModuleGroup {
-    registry: Arc<dyn ModuleRegistry>,
+    registry: Arc<dyn crate::discovery::RegistryProvider>,
+    #[allow(dead_code)]
     executor: Arc<dyn ModuleExecutor>,
     /// Cache of module name -> name string (we store the name, not the Command,
     /// since clap::Command is not Clone in all configurations).
@@ -124,7 +105,7 @@ impl LazyModuleGroup {
     /// * `registry` — module registry (real or mock)
     /// * `executor` — module executor (real or mock)
     pub fn new(
-        registry: Arc<dyn ModuleRegistry>,
+        registry: Arc<dyn crate::discovery::RegistryProvider>,
         executor: Arc<dyn ModuleExecutor>,
     ) -> Self {
         Self {
@@ -139,12 +120,7 @@ impl LazyModuleGroup {
     /// Return sorted list of all command names: built-ins + module ids.
     pub fn list_commands(&self) -> Vec<String> {
         let mut names: Vec<String> = BUILTIN_COMMANDS.iter().map(|s| s.to_string()).collect();
-        match self.registry.list_modules() {
-            Ok(module_ids) => names.extend(module_ids),
-            Err(e) => {
-                tracing::warn!("Failed to list modules from registry: {e}");
-            }
-        }
+        names.extend(self.registry.list());
         // Sort and dedup in one pass.
         names.sort_unstable();
         names.dedup();
@@ -588,8 +564,8 @@ fn extract_cli_kwargs(
 pub async fn dispatch_module(
     module_id: &str,
     matches: &clap::ArgMatches,
-    registry: &Arc<dyn ModuleRegistry>,
-    executor: &Arc<dyn ModuleExecutor + 'static>,
+    registry: &Arc<dyn crate::discovery::RegistryProvider>,
+    _executor: &Arc<dyn ModuleExecutor + 'static>,
     apcore_executor: &apcore::Executor,
 ) -> ! {
     use crate::{
@@ -977,13 +953,29 @@ mod tests {
     // ---------------------------------------------------------------------------
 
     /// Mock registry that returns a fixed list of module names.
-    struct MockRegistry {
+    struct CliMockRegistry {
         modules: Vec<String>,
     }
 
-    impl ModuleRegistry for MockRegistry {
-        fn list_modules(&self) -> Result<Vec<String>, String> {
-            Ok(self.modules.clone())
+    impl crate::discovery::RegistryProvider for CliMockRegistry {
+        fn list(&self) -> Vec<String> {
+            self.modules.clone()
+        }
+
+        fn get_definition(&self, name: &str) -> Option<Value> {
+            if self.modules.iter().any(|m| m == name) {
+                Some(serde_json::json!({
+                    "module_id": name,
+                    "name": name,
+                    "input_schema": {},
+                    "output_schema": {},
+                    "enabled": true,
+                    "tags": [],
+                    "dependencies": [],
+                }))
+            } else {
+                None
+            }
         }
 
         fn get_module_descriptor(
@@ -1006,18 +998,15 @@ mod tests {
         }
     }
 
-    /// Mock registry whose list_modules() always returns an error.
-    struct ErrorRegistry;
+    /// Mock registry that returns an empty list (simulates unavailable registry).
+    struct EmptyRegistry;
 
-    impl ModuleRegistry for ErrorRegistry {
-        fn list_modules(&self) -> Result<Vec<String>, String> {
-            Err("registry unavailable".to_string())
+    impl crate::discovery::RegistryProvider for EmptyRegistry {
+        fn list(&self) -> Vec<String> {
+            vec![]
         }
 
-        fn get_module_descriptor(
-            &self,
-            _name: &str,
-        ) -> Option<apcore::registry::registry::ModuleDescriptor> {
+        fn get_definition(&self, _name: &str) -> Option<Value> {
             None
         }
     }
@@ -1027,8 +1016,8 @@ mod tests {
 
     impl ModuleExecutor for MockExecutor {}
 
-    fn mock_registry(modules: Vec<&str>) -> Arc<dyn ModuleRegistry> {
-        Arc::new(MockRegistry {
+    fn mock_registry(modules: Vec<&str>) -> Arc<dyn crate::discovery::RegistryProvider> {
+        Arc::new(CliMockRegistry {
             modules: modules.iter().map(|s| s.to_string()).collect(),
         })
     }
@@ -1064,7 +1053,7 @@ mod tests {
 
     #[test]
     fn test_lazy_module_group_list_commands_registry_error() {
-        let group = LazyModuleGroup::new(Arc::new(ErrorRegistry), mock_executor());
+        let group = LazyModuleGroup::new(Arc::new(EmptyRegistry), mock_executor());
         let cmds = group.list_commands();
         // Must not be empty; must contain builtins.
         assert!(!cmds.is_empty());

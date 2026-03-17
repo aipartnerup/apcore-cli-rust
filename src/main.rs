@@ -179,11 +179,11 @@ fn build_cli_command(extensions_dir: Option<String>, prog_name: Option<String>, 
         );
 
     // Register built-in subcommands from discovery and shell modules.
-    // The registry is only needed at dispatch time (cmd_list / cmd_describe), not
-    // during clap command registration, so a placeholder is used here.
-    let placeholder_registry: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
-        std::sync::Arc::new(apcore_cli::discovery::MockRegistry::new(vec![]));
-    cmd = apcore_cli::discovery::register_discovery_commands(cmd, placeholder_registry);
+    // The registry parameter is unused during clap command registration —
+    // it is only needed at dispatch time for cmd_list / cmd_describe.
+    let placeholder: std::sync::Arc<dyn apcore_cli::RegistryProvider> =
+        std::sync::Arc::new(apcore_cli::ApCoreRegistryProvider::new(apcore::Registry::new()));
+    cmd = apcore_cli::discovery::register_discovery_commands(cmd, placeholder);
     cmd = apcore_cli::shell::register_shell_commands(cmd, &name);
 
     cmd
@@ -309,9 +309,13 @@ async fn main() {
                 }
             }
         }
-        Some((_external, _sub_m)) => {
-            // Dynamic module dispatch for unrecognised subcommands.
-            eprintln!("Error: Unknown subcommand. Use --help for usage.");
+        Some((external, _sub_m)) => {
+            // Dynamic module dispatch not yet implemented.
+            // TODO: wire dispatch_module here for module execution.
+            eprintln!(
+                "Error: Dynamic module dispatch not yet implemented. \
+                 Cannot execute '{external}'. Use 'list' to see available built-in commands."
+            );
             std::process::exit(apcore_cli::EXIT_MODULE_NOT_FOUND);
         }
         None => {
@@ -331,6 +335,9 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mutex serializes tests that manipulate environment variables.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // --- extract_extensions_dir ---
 
@@ -383,7 +390,9 @@ mod tests {
 
     #[test]
     fn test_resolve_log_level_no_override_returns_warn() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         // Without env vars set, should default to "warn".
+        // SAFETY: test-only env manipulation, serialized via ENV_MUTEX.
         unsafe {
             std::env::remove_var("APCORE_CLI_LOGGING_LEVEL");
             std::env::remove_var("APCORE_LOGGING_LEVEL");

@@ -33,13 +33,16 @@ pub const EXIT_SIGINT: i32 = 130;
 pub use approval::{check_approval, ApprovalError};
 pub use cli::{
     build_module_command, collect_input, collect_input_from_reader, set_audit_logger,
-    validate_module_id,
+    validate_module_id, ModuleExecutor,
 };
 pub use config::ConfigResolver;
 pub use discovery::{
-    cmd_describe, cmd_list, mock_module, register_discovery_commands, ApCoreRegistryProvider,
-    DiscoveryError, MockRegistry, RegistryProvider,
+    cmd_describe, cmd_list, register_discovery_commands, ApCoreRegistryProvider,
+    DiscoveryError, RegistryProvider,
 };
+// Test utilities — available but hidden from docs.
+#[doc(hidden)]
+pub use discovery::{mock_module, MockRegistry};
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
 pub use ref_resolver::resolve_refs;
 pub use schema_parser::{

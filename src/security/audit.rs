@@ -50,7 +50,7 @@ impl AuditLogger {
     }
 
     /// Return the username from the environment: `USER` -> `LOGNAME` -> `"unknown"`.
-    fn _get_user() -> String {
+    fn get_user() -> String {
         std::env::var("USER")
             .or_else(|_| std::env::var("LOGNAME"))
             .unwrap_or_else(|_| "unknown".to_string())
@@ -65,14 +65,14 @@ impl AuditLogger {
     /// of audit entries by input content. This is a privacy design choice
     /// matching the Python reference implementation — the hash proves an input
     /// was logged but cannot be used to find duplicate inputs across entries.
-    fn _hash_input(input_data: &Value) -> String {
+    fn hash_input(input_data: &Value) -> String {
         use aes_gcm::aead::rand_core::RngCore;
         use aes_gcm::aead::OsRng;
 
         let mut salt = [0u8; 16];
         OsRng.fill_bytes(&mut salt);
 
-        let payload = Self::_stable_json(input_data);
+        let payload = Self::stable_json(input_data);
         let salted = format!("{}:{}", HASH_SALT, payload);
 
         let mut hasher = Sha256::new();
@@ -82,7 +82,7 @@ impl AuditLogger {
     }
 
     /// Produce a stable (sorted-key) JSON string for `v`.
-    fn _stable_json(v: &Value) -> String {
+    fn stable_json(v: &Value) -> String {
         match v {
             Value::Object(map) => {
                 let sorted: std::collections::BTreeMap<_, _> = map.iter().collect();
@@ -92,7 +92,7 @@ impl AuditLogger {
                         format!(
                             "{}:{}",
                             serde_json::json!(k),
-                            Self::_stable_json(val)
+                            Self::stable_json(val)
                         )
                     })
                     .collect();
@@ -131,9 +131,9 @@ impl AuditLogger {
         let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
         let entry = json!({
             "timestamp":   timestamp,
-            "user":        Self::_get_user(),
+            "user":        Self::get_user(),
             "module_id":   module_id,
-            "input_hash":  Self::_hash_input(input_data),
+            "input_hash":  Self::hash_input(input_data),
             "status":      status,
             "exit_code":   exit_code,
             "duration_ms": duration_ms,

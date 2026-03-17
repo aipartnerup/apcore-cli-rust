@@ -96,6 +96,15 @@ impl ConfigEncryptor {
     /// Returns a config-file token:
     /// - `"keyring:<key>"` when stored in the OS keyring.
     /// - `"enc:<base64>"` when stored as an encrypted blob.
+    ///
+    /// # Security note
+    ///
+    /// The `enc:` fallback path derives its encryption key from the machine's
+    /// hostname and the current username. This protects against casual file
+    /// browsing but **not** against targeted attacks by co-tenants on shared
+    /// systems who know both values. For sensitive credentials (API keys,
+    /// tokens), prefer the `keyring:` path (OS keyring) when available, or
+    /// use environment variables instead of config file storage.
     pub fn store(&self, key: &str, value: &str) -> Result<String, ConfigDecryptionError> {
         if self._keyring_available() {
             let entry = keyring::Entry::new(SERVICE_NAME, key)

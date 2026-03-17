@@ -56,24 +56,26 @@ fn test_e2e_describe_command() {
 
 #[test]
 fn test_e2e_execute_math_add() {
-    // Placeholder — dynamic dispatch not yet implemented.
-    // Verify binary runs without panic on unknown subcommand.
+    // Dynamic module dispatch not yet implemented — expect exit 44.
+    // TODO: tighten to assert exit code 0 once dispatch_module is wired
+    // into the external subcommand match arm in main.rs.
     let out = run_apcore(&[
         "--extensions-dir",
         "./tests/fixtures/extensions",
         "math.add",
     ]);
-    // EXIT_MODULE_NOT_FOUND (44) is acceptable while dispatch is a stub.
-    assert!(
-        out.status.code() == Some(44) || out.status.code() == Some(0),
-        "math.add exits 44 (stub) or 0, got {:?}",
+    assert_eq!(
+        out.status.code(),
+        Some(44),
+        "math.add must exit 44 (not yet dispatched), got {:?}",
         out.status.code()
     );
 }
 
 #[test]
 fn test_e2e_stdin_piping() {
-    // Placeholder — dynamic dispatch not yet implemented.
+    // Dynamic module dispatch not yet implemented — expect exit 44.
+    // TODO: tighten to assert exit code 0 once dispatch_module is wired.
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
         .args(&[
             "--extensions-dir",
@@ -85,10 +87,10 @@ fn test_e2e_stdin_piping() {
         .stdin(std::process::Stdio::null())
         .output()
         .unwrap();
-    // Acceptable while dispatch is a stub.
-    assert!(
-        out.status.code() == Some(44) || out.status.code() == Some(0),
-        "stdin piping exits 44 (stub) or 0, got {:?}",
+    assert_eq!(
+        out.status.code(),
+        Some(44),
+        "stdin piping must exit 44 (not yet dispatched), got {:?}",
         out.status.code()
     );
 }

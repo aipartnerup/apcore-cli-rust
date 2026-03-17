@@ -52,27 +52,50 @@ fn test_authenticate_request_adds_bearer_header() {
 }
 
 #[test]
-fn test_handle_response_ok_returns_response() {
-    // Verify the AuthenticationError enum messages match spec so that the
-    // handle_response() 200 path is correctly documented.
-    // (reqwest::Response cannot be constructed without a live HTTP call;
-    //  the status-dispatch logic is covered by unit tests in auth.rs.)
+fn test_check_status_code_200_ok() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+    let provider = AuthProvider::new(make_empty_resolver());
+    assert!(provider.check_status_code(200).is_ok());
+}
+
+#[test]
+fn test_check_status_code_401_returns_invalid_key() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+    let provider = AuthProvider::new(make_empty_resolver());
+    let err = provider.check_status_code(401).unwrap_err();
+    assert!(matches!(err, AuthenticationError::InvalidApiKey));
+}
+
+#[test]
+fn test_check_status_code_403_returns_invalid_key() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+    let provider = AuthProvider::new(make_empty_resolver());
+    let err = provider.check_status_code(403).unwrap_err();
+    assert!(matches!(err, AuthenticationError::InvalidApiKey));
+}
+
+#[test]
+fn test_check_status_code_500_passes_through() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+    let provider = AuthProvider::new(make_empty_resolver());
+    assert!(provider.check_status_code(500).is_ok());
+}
+
+#[test]
+fn test_error_messages_match_spec() {
     let missing = AuthenticationError::MissingApiKey;
     assert!(
         missing.to_string().contains("APCORE_AUTH_API_KEY"),
         "MissingApiKey message must mention the env var"
     );
-}
-
-#[test]
-fn test_handle_response_401_returns_invalid_key_error() {
-    // Verify the InvalidApiKey error variant exists and has the expected message.
-    // (Live HTTP mock tests are deferred; reqwest::Response is not constructible
-    //  without an actual HTTP request in this test harness.)
-    let err = AuthenticationError::InvalidApiKey;
+    let invalid = AuthenticationError::InvalidApiKey;
     assert!(
-        err.to_string().contains("Authentication failed"),
+        invalid.to_string().contains("Authentication failed"),
         "InvalidApiKey message must say 'Authentication failed', got: {}",
-        err
+        invalid
     );
 }

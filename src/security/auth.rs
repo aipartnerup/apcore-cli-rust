@@ -97,6 +97,17 @@ impl AuthProvider {
         Ok(builder.header("Authorization", format!("Bearer {key}")))
     }
 
+    /// Check an HTTP status code for authentication errors.
+    ///
+    /// Returns `Ok(())` for non-auth-error codes, `Err(InvalidApiKey)` for 401/403.
+    /// This is the testable core of `handle_response`.
+    pub fn check_status_code(&self, status: u16) -> Result<(), AuthenticationError> {
+        match status {
+            401 | 403 => Err(AuthenticationError::InvalidApiKey),
+            _ => Ok(()),
+        }
+    }
+
     /// Inspect an HTTP response for 401/403 codes and raise the appropriate error.
     ///
     /// Returns the response unchanged if authentication succeeded.
@@ -104,10 +115,8 @@ impl AuthProvider {
         &self,
         response: reqwest::Response,
     ) -> Result<reqwest::Response, AuthenticationError> {
-        match response.status().as_u16() {
-            401 | 403 => Err(AuthenticationError::InvalidApiKey),
-            _ => Ok(response),
-        }
+        self.check_status_code(response.status().as_u16())?;
+        Ok(response)
     }
 }
 

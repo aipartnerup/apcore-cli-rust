@@ -28,16 +28,27 @@ pub enum DiscoveryError {
 // RegistryProvider trait
 // ---------------------------------------------------------------------------
 
-/// Minimal registry interface used by discovery commands.
+/// Unified registry interface used by both discovery commands and the CLI
+/// dispatcher. Provides JSON-based access (`get_definition`) for discovery
+/// and typed access (`get_module_descriptor`) for the dispatch pipeline.
 ///
-/// The real `apcore::Registry` implements this trait via a thin adaptor
-/// (added in the `core-dispatcher` feature). Tests use `MockRegistry`.
+/// The real `apcore::Registry` implements this trait via `ApCoreRegistryProvider`.
+/// Tests use `MockRegistry`.
 pub trait RegistryProvider: Send + Sync {
     /// Return all module IDs in the registry.
     fn list(&self) -> Vec<String>;
 
     /// Return the JSON descriptor for a single module, or `None` if not found.
     fn get_definition(&self, id: &str) -> Option<Value>;
+
+    /// Return the typed descriptor for a single module, or `None` if not found.
+    ///
+    /// The default implementation deserializes from `get_definition`. Adapters
+    /// wrapping a real `apcore::Registry` should override this for efficiency.
+    fn get_module_descriptor(&self, id: &str) -> Option<apcore::registry::registry::ModuleDescriptor> {
+        self.get_definition(id)
+            .and_then(|v| serde_json::from_value(v).ok())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +239,10 @@ impl RegistryProvider for ApCoreRegistryProvider {
         self.registry
             .get_definition(id)
             .and_then(|d| serde_json::to_value(d).ok())
+    }
+
+    fn get_module_descriptor(&self, id: &str) -> Option<apcore::registry::registry::ModuleDescriptor> {
+        self.registry.get_definition(id).cloned()
     }
 }
 
