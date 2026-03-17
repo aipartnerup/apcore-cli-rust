@@ -181,7 +181,11 @@ pub fn create_cli(extensions_dir: Option<String>, prog_name: Option<String>) -> 
         );
 
     // Register built-in subcommands from discovery and shell modules.
-    cmd = apcore_cli::discovery::register_discovery_commands(cmd);
+    // The registry is not used by the clap command builders; it is consumed by
+    // cmd_list / cmd_describe at dispatch time (wired in the next task).
+    let empty_registry: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
+        std::sync::Arc::new(apcore_cli::discovery::MockRegistry::new(vec![]));
+    cmd = apcore_cli::discovery::register_discovery_commands(cmd, empty_registry);
     cmd = apcore_cli::shell::register_shell_commands(cmd, &name);
 
     cmd
