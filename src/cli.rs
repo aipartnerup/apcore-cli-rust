@@ -143,24 +143,59 @@ pub fn collect_input(
 // ---------------------------------------------------------------------------
 
 const MODULE_ID_MAX_LEN: usize = 128;
-// Pattern: lowercase letters, digits, underscores, dots — no leading/trailing
-// dot, no consecutive dots, must not start with a digit.
-const MODULE_ID_PATTERN: &str = r"^[a-z_][a-z0-9_.]*$";
 
 /// Validate a module identifier.
 ///
 /// # Rules
 /// * Maximum 128 characters
-/// * Matches `^[a-z_][a-z0-9_.]*$`
-/// * No leading/trailing dots
-/// * No consecutive dots
+/// * Matches `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`
+/// * No leading/trailing dots, no consecutive dots
+/// * Must not start with a digit or uppercase letter
 ///
 /// # Errors
 /// Returns `CliError::InvalidModuleId` (exit code 2) on any violation.
 pub fn validate_module_id(module_id: &str) -> Result<(), CliError> {
-    // TODO: enforce length, regex, dot rules.
-    let _ = module_id;
-    todo!("validate_module_id")
+    if module_id.len() > MODULE_ID_MAX_LEN {
+        return Err(CliError::InvalidModuleId(format!(
+            "Invalid module ID format: '{module_id}'. Maximum length is {MODULE_ID_MAX_LEN} characters."
+        )));
+    }
+    if !is_valid_module_id(module_id) {
+        return Err(CliError::InvalidModuleId(format!(
+            "Invalid module ID format: '{module_id}'."
+        )));
+    }
+    Ok(())
+}
+
+/// Hand-written validator matching `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`.
+///
+/// Does not require the `regex` crate.
+#[inline]
+fn is_valid_module_id(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    // Split on '.' and validate each segment individually.
+    for segment in s.split('.') {
+        if segment.is_empty() {
+            // Catches leading dot, trailing dot, and consecutive dots.
+            return false;
+        }
+        let mut chars = segment.chars();
+        // First character must be a lowercase ASCII letter.
+        match chars.next() {
+            Some(c) if c.is_ascii_lowercase() => {}
+            _ => return false,
+        }
+        // Remaining characters: lowercase letter, ASCII digit, or underscore.
+        for c in chars {
+            if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_' {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------
