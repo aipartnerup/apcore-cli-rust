@@ -226,12 +226,15 @@ pub fn build_module_command(
     //   let resolved = crate::ref_resolver::resolve_refs(&mut schema, 32, module_id)?;
     let resolved_schema = module_def.input_schema.clone();
 
-    // TODO: schema_to_clap_args is a stub — returns empty vec for now.
-    // When FE-09 is implemented this will yield schema-derived flags.
-    let schema_args = crate::schema_parser::schema_to_clap_args_or_empty(&resolved_schema);
+    // Build clap args from JSON Schema properties.
+    let schema_args = crate::schema_parser::schema_to_clap_args(&resolved_schema)
+        .unwrap_or_else(|e| {
+            eprintln!("Error: {e}");
+            std::process::exit(48);
+        });
 
     // Check for schema property names that collide with built-in flags.
-    for arg in &schema_args {
+    for arg in &schema_args.args {
         if let Some(long) = arg.get_long() {
             if RESERVED_FLAG_NAMES.contains(&long) {
                 eprintln!(
@@ -280,8 +283,8 @@ pub fn build_module_command(
                 .help("Run module in subprocess sandbox."),
         );
 
-    // Attach schema-derived args (stub: none for now).
-    for arg in schema_args {
+    // Attach schema-derived args.
+    for arg in schema_args.args {
         cmd = cmd.arg(arg);
     }
 
@@ -511,16 +514,70 @@ pub(crate) fn validate_against_schema(
 // dispatch_module — full execution pipeline
 // ---------------------------------------------------------------------------
 
+/// Reconcile --flag / --no-flag boolean pairs from ArgMatches into bool values.
+///
+/// For each BoolFlagPair:
+/// - If --flag was set  → prop_name = true
+/// - If --no-flag set   → prop_name = false
+/// - If neither         → prop_name = default_val
+pub fn reconcile_bool_pairs(
+    matches: &clap::ArgMatches,
+    bool_pairs: &[crate::schema_parser::BoolFlagPair],
+) -> HashMap<String, Value> {
+    let mut result = HashMap::new();
+    for pair in bool_pairs {
+        let pos_set = matches.get_flag(&pair.prop_name);
+        let neg_id = format!("no-{}", pair.prop_name);
+        let neg_set = matches.get_flag(&neg_id);
+        let val = if pos_set {
+            true
+        } else if neg_set {
+            false
+        } else {
+            pair.default_val
+        };
+        result.insert(pair.prop_name.clone(), Value::Bool(val));
+    }
+    result
+}
+
 /// Extract schema-derived CLI kwargs from `ArgMatches` for a given module.
 ///
-/// Currently a stub that returns an empty map; will be populated once
-/// `schema_to_clap_args` (FE-09) is implemented.
+/// Iterates schema properties and extracts string values from clap matches.
+/// Boolean pairs are handled separately via `reconcile_bool_pairs`.
 fn extract_cli_kwargs(
-    _matches: &clap::ArgMatches,
-    _module_def: &apcore::registry::registry::ModuleDescriptor,
+    matches: &clap::ArgMatches,
+    module_def: &apcore::registry::registry::ModuleDescriptor,
 ) -> HashMap<String, Value> {
-    // TODO(FE-09): iterate schema-derived arg names and extract values.
-    HashMap::new()
+    use crate::schema_parser::schema_to_clap_args;
+
+    let schema_args = match schema_to_clap_args(&module_def.input_schema) {
+        Ok(sa) => sa,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut kwargs: HashMap<String, Value> = HashMap::new();
+
+    // Extract non-boolean schema args as strings (or Null if absent).
+    for arg in &schema_args.args {
+        let id = arg.get_id().as_str().to_string();
+        // Skip the no- counterparts of boolean args.
+        if id.starts_with("no-") {
+            continue;
+        }
+        if let Some(val) = matches.get_one::<String>(&id) {
+            kwargs.insert(id, Value::String(val.clone()));
+        } else {
+            kwargs.insert(id, Value::Null);
+        }
+    }
+
+    // Reconcile boolean pairs.
+    let bool_vals = reconcile_bool_pairs(matches, &schema_args.bool_pairs);
+    kwargs.extend(bool_vals);
+
+    // Apply enum type reconversion.
+    crate::schema_parser::reconvert_enum_values(kwargs, &schema_args)
 }
 
 /// Execute a module by ID: validate → collect input → validate schema

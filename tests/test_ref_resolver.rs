@@ -14,9 +14,14 @@ fn test_resolve_refs_no_refs_returns_unchanged() {
             "name": {"type": "string"}
         }
     });
-    let result = resolve_refs(&mut schema, 10, "test.module");
-    // TODO: assert result is Ok and schema is unchanged.
-    assert!(false, "not implemented");
+    let resolved = resolve_refs(&mut schema, 10, "test.module");
+    assert!(resolved.is_ok(), "schema with no $refs must resolve successfully");
+    let resolved = resolved.unwrap();
+    assert_eq!(
+        resolved["properties"]["name"]["type"],
+        json!("string"),
+        "schema must remain unchanged"
+    );
 }
 
 #[test]
@@ -30,9 +35,14 @@ fn test_resolve_refs_simple_inline() {
             "name": {"$ref": "#/$defs/MyString"}
         }
     });
-    let result = resolve_refs(&mut schema, 10, "test.module");
-    // TODO: assert name property is inlined with type="string".
-    assert!(false, "not implemented");
+    let resolved = resolve_refs(&mut schema, 10, "test.module");
+    assert!(resolved.is_ok(), "simple $ref must resolve successfully");
+    let resolved = resolved.unwrap();
+    assert_eq!(
+        resolved["properties"]["name"]["type"],
+        json!("string"),
+        "inlined $ref must have type=string"
+    );
 }
 
 #[test]
@@ -49,7 +59,7 @@ fn test_resolve_refs_unresolvable_returns_error() {
 
 #[test]
 fn test_resolve_refs_circular_returns_error() {
-    // A → B → A must produce a Circular error.
+    // A → B → A must produce a Circular or MaxDepthExceeded error.
     let mut schema = json!({
         "$defs": {
             "A": {"$ref": "#/$defs/B"},
@@ -61,8 +71,13 @@ fn test_resolve_refs_circular_returns_error() {
         }
     });
     let result = resolve_refs(&mut schema, 20, "test.module");
-    // TODO: assert Circular or MaxDepthExceeded error.
-    assert!(false, "not implemented");
+    assert!(
+        matches!(
+            result,
+            Err(RefResolverError::Circular { .. }) | Err(RefResolverError::MaxDepthExceeded { .. })
+        ),
+        "circular $ref must produce Circular or MaxDepthExceeded error, got: {result:?}"
+    );
 }
 
 #[test]
@@ -87,5 +102,32 @@ fn test_resolve_refs_max_depth_exceeded() {
 #[test]
 fn test_resolve_refs_nested_properties() {
     // $refs inside nested properties must all be resolved.
-    assert!(false, "not implemented");
+    let mut schema = json!({
+        "$defs": {
+            "Coord": {"type": "number", "description": "A coordinate"}
+        },
+        "type": "object",
+        "properties": {
+            "point": {
+                "type": "object",
+                "properties": {
+                    "x": {"$ref": "#/$defs/Coord"},
+                    "y": {"$ref": "#/$defs/Coord"}
+                }
+            }
+        }
+    });
+    let resolved = resolve_refs(&mut schema, 10, "test.module");
+    assert!(resolved.is_ok(), "nested $refs must resolve successfully");
+    let resolved = resolved.unwrap();
+    assert_eq!(
+        resolved["properties"]["point"]["properties"]["x"]["type"],
+        json!("number"),
+        "nested x $ref must be inlined"
+    );
+    assert_eq!(
+        resolved["properties"]["point"]["properties"]["y"]["type"],
+        json!("number"),
+        "nested y $ref must be inlined"
+    );
 }
