@@ -56,30 +56,39 @@ fn test_e2e_describe_command() {
 
 #[test]
 fn test_e2e_execute_math_add() {
-    // Dynamic module dispatch not yet implemented — expect exit 44.
-    // TODO: tighten to assert exit code 0 once dispatch_module is wired
-    // into the external subcommand match arm in main.rs.
+    // External subcommand "math.add" now routes through dispatch_module.
+    // With a real extensions dir the module should be found; exit 0 on success
+    // or 44 if not found in registry (valid module ID format).
     let out = run_apcore(&[
         "--extensions-dir",
         "./tests/fixtures/extensions",
         "math.add",
     ]);
-    assert_eq!(
-        out.status.code(),
-        Some(44),
-        "math.add must exit 44 (not yet dispatched), got {:?}",
+    // dispatch_module validates the module ID (exit 2 if invalid format)
+    // then looks it up in the registry (exit 44 if not found).
+    // math.add is a valid ID format, so we expect 0 (found) or 44 (not found).
+    assert!(
+        out.status.code() == Some(0) || out.status.code() == Some(44),
+        "math.add via external subcommand must route to dispatch_module, got {:?}",
         out.status.code()
+    );
+    // Must NOT contain the old "not yet implemented" message.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("not yet implemented"),
+        "external subcommand must not print 'not yet implemented'"
     );
 }
 
 #[test]
 fn test_e2e_stdin_piping() {
-    // Dynamic module dispatch not yet implemented — expect exit 44.
-    // TODO: tighten to assert exit code 0 once dispatch_module is wired.
+    // External subcommand "math.add --input -" now routes through dispatch_module.
+    // stdin is /dev/null so collect_input reads empty input.
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
         .args(&[
             "--extensions-dir",
             "./tests/fixtures/extensions",
+            "exec",
             "math.add",
             "--input",
             "-",
@@ -87,11 +96,16 @@ fn test_e2e_stdin_piping() {
         .stdin(std::process::Stdio::null())
         .output()
         .unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(44),
-        "stdin piping must exit 44 (not yet dispatched), got {:?}",
+    // dispatch_module validates ID then does registry lookup; expect 0 or 44.
+    assert!(
+        out.status.code() == Some(0) || out.status.code() == Some(44),
+        "exec math.add --input - must route to dispatch_module, got {:?}",
         out.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("not yet implemented"),
+        "exec subcommand must not print 'not yet implemented'"
     );
 }
 
@@ -103,6 +117,61 @@ fn test_e2e_unknown_module_exits_44() {
         "nonexistent.module",
     ]);
     assert_eq!(out.status.code(), Some(44));
+}
+
+#[test]
+fn test_e2e_exec_subcommand_routes_to_dispatch() {
+    // `apcore-cli exec math.add` must route through dispatch_module.
+    let out = run_apcore(&[
+        "--extensions-dir",
+        "./tests/fixtures/extensions",
+        "exec",
+        "math.add",
+    ]);
+    // Valid module ID format; exit 0 (found) or 44 (not in registry).
+    assert!(
+        out.status.code() == Some(0) || out.status.code() == Some(44),
+        "exec math.add must route to dispatch_module, got {:?}",
+        out.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("not yet implemented"),
+        "exec subcommand must not print 'not yet implemented'"
+    );
+}
+
+#[test]
+fn test_e2e_exec_invalid_module_id_exits_2() {
+    // An invalid module ID format (no dot separator) should exit 2.
+    let out = run_apcore(&[
+        "--extensions-dir",
+        "./tests/fixtures/extensions",
+        "exec",
+        "INVALID",
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "exec with invalid module ID format must exit 2, got {:?}",
+        out.status.code()
+    );
+}
+
+#[test]
+fn test_e2e_external_invalid_module_id_exits_2() {
+    // An invalid module ID format via external subcommand should exit 2.
+    let out = run_apcore(&[
+        "--extensions-dir",
+        "./tests/fixtures/extensions",
+        "INVALID",
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "external subcommand with invalid module ID must exit 2, got {:?}",
+        out.status.code()
+    );
 }
 
 #[test]

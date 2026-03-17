@@ -312,14 +312,54 @@ async fn main() {
                 }
             }
         }
-        Some((external, _sub_m)) => {
-            // Dynamic module dispatch not yet implemented.
-            // TODO: wire dispatch_module here for module execution.
-            eprintln!(
-                "Error: Dynamic module dispatch not yet implemented. \
-                 Cannot execute '{external}'. Use 'list' to see available built-in commands."
-            );
-            std::process::exit(apcore_cli::EXIT_MODULE_NOT_FOUND);
+        Some(("exec", sub_m)) => {
+            let module_id = sub_m.get_one::<String>("module_id")
+                .expect("module_id is required");
+            let executor: std::sync::Arc<dyn apcore_cli::ModuleExecutor> =
+                std::sync::Arc::new(apcore_cli::cli::ApCoreExecutorAdapter(
+                    apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
+                ));
+            let apcore_executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+            apcore_cli::cli::dispatch_module(
+                module_id, sub_m, &registry_provider, &executor, &apcore_executor,
+            ).await;
+        }
+        Some((external, sub_m)) => {
+            // External subcommand: re-parse trailing args through a temporary
+            // command so that dispatch_module can access built-in flags like
+            // --yes, --input, --format, --sandbox, etc.
+            let external = external.to_string();
+            let trailing: Vec<String> = sub_m
+                .get_many::<std::ffi::OsString>("")
+                .into_iter()
+                .flatten()
+                .filter_map(|s| s.to_str().map(|v| v.to_string()))
+                .collect();
+
+            // Build a temporary command with the same flags as exec_command
+            // (minus the positional module_id arg).
+            let temp_cmd = clap::Command::new(&external)
+                .arg(clap::Arg::new("input").long("input").value_name("SOURCE"))
+                .arg(clap::Arg::new("yes").long("yes").short('y').action(clap::ArgAction::SetTrue))
+                .arg(clap::Arg::new("large-input").long("large-input").action(clap::ArgAction::SetTrue))
+                .arg(clap::Arg::new("format").long("format").value_parser(["table", "json"]))
+                .arg(clap::Arg::new("sandbox").long("sandbox").action(clap::ArgAction::SetTrue))
+                .no_binary_name(true);
+
+            let ext_matches = temp_cmd.try_get_matches_from(&trailing)
+                .unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                });
+
+            let executor: std::sync::Arc<dyn apcore_cli::ModuleExecutor> =
+                std::sync::Arc::new(apcore_cli::cli::ApCoreExecutorAdapter(
+                    apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
+                ));
+            let apcore_executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+            apcore_cli::cli::dispatch_module(
+                &external, &ext_matches, &registry_provider, &executor, &apcore_executor,
+            ).await;
         }
         None => {
             // No subcommand: print help.

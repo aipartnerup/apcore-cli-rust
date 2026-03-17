@@ -117,6 +117,12 @@ pub fn exec_command() -> clap::Command {
                 .value_parser(["table", "json"])
                 .help("Output format (table or json)"),
         )
+        .arg(
+            Arg::new("sandbox")
+                .long("sandbox")
+                .action(ArgAction::SetTrue)
+                .help("Run module in subprocess sandbox"),
+        )
 }
 
 // ---------------------------------------------------------------------------
