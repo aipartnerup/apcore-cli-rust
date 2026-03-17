@@ -110,22 +110,21 @@ fn resolve_log_level(override_level: Option<&str>) -> String {
 
 /// Validate that the extensions directory exists and is readable.
 ///
-/// Prints an error to stderr and calls `std::process::exit(47)` on failure.
-fn validate_extensions_dir(ext_dir: &str) {
+/// Returns `Err(message)` if the directory is missing or unreadable.
+fn validate_extensions_dir(ext_dir: &str) -> Result<(), String> {
     let path = Path::new(ext_dir);
     if !path.exists() {
-        eprintln!(
-            "Error: Extensions directory not found: '{ext_dir}'. \
+        return Err(format!(
+            "Extensions directory not found: '{ext_dir}'. \
              Set APCORE_EXTENSIONS_ROOT or verify the path."
-        );
-        std::process::exit(EXIT_CONFIG_NOT_FOUND);
+        ));
     }
     if std::fs::read_dir(path).is_err() {
-        eprintln!(
-            "Error: Cannot read extensions directory: '{ext_dir}'. Check file permissions."
-        );
-        std::process::exit(EXIT_CONFIG_NOT_FOUND);
+        return Err(format!(
+            "Cannot read extensions directory: '{ext_dir}'. Check file permissions."
+        ));
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +133,7 @@ fn validate_extensions_dir(ext_dir: &str) {
 
 /// Build the root `clap::Command` tree.
 ///
-/// When `validate` is true, exits 47 if `extensions_dir` does not exist.
+/// When `validate` is true, prints an error and exits 47 if `extensions_dir` does not exist.
 /// When `validate` is false (used for completion/man page generation),
 /// skips the directory check.
 fn build_cli_command(extensions_dir: Option<String>, prog_name: Option<String>, validate: bool) -> clap::Command {
@@ -153,7 +152,10 @@ fn build_cli_command(extensions_dir: Option<String>, prog_name: Option<String>, 
 
     // Validate extensions directory (only when running real commands).
     if validate {
-        validate_extensions_dir(&ext_dir);
+        if let Err(msg) = validate_extensions_dir(&ext_dir) {
+            eprintln!("Error: {msg}");
+            std::process::exit(EXIT_CONFIG_NOT_FOUND);
+        }
     }
 
     // Build root command.
@@ -183,6 +185,7 @@ fn build_cli_command(extensions_dir: Option<String>, prog_name: Option<String>, 
     // it is only needed at dispatch time for cmd_list / cmd_describe.
     let placeholder: std::sync::Arc<dyn apcore_cli::RegistryProvider> =
         std::sync::Arc::new(apcore_cli::ApCoreRegistryProvider::new(apcore::Registry::new()));
+    cmd = cmd.subcommand(apcore_cli::cli::exec_command());
     cmd = apcore_cli::discovery::register_discovery_commands(cmd, placeholder);
     cmd = apcore_cli::shell::register_shell_commands(cmd, &name);
 
@@ -398,6 +401,86 @@ mod tests {
             std::env::remove_var("APCORE_LOGGING_LEVEL");
         }
         assert_eq!(resolve_log_level(None), "warn");
+    }
+
+    // --- LOG_LEVELS constant ---
+
+    // --- validate_extensions_dir ---
+
+    #[test]
+    fn test_validate_extensions_dir_nonexistent_returns_err() {
+        let result = validate_extensions_dir("/nonexistent/path/xxx");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_validate_extensions_dir_valid_returns_ok() {
+        let dir = std::env::temp_dir();
+        let result = validate_extensions_dir(dir.to_str().unwrap());
+        assert!(result.is_ok());
+    }
+
+    // --- exec subcommand ---
+
+    #[test]
+    fn test_exec_subcommand_exists() {
+        let cmd = build_cli_command(None, None, false);
+        let exec = cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == "exec");
+        assert!(exec.is_some(), "build_cli_command must include 'exec' subcommand");
+    }
+
+    #[test]
+    fn test_exec_subcommand_has_required_module_id() {
+        let cmd = build_cli_command(None, None, false);
+        let exec = cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == "exec")
+            .expect("exec subcommand must exist");
+        let module_id = exec.get_arguments().find(|a| a.get_id() == "module_id");
+        assert!(module_id.is_some(), "exec must have a 'module_id' argument");
+        assert!(module_id.unwrap().is_required_set(), "module_id must be required");
+    }
+
+    #[test]
+    fn test_exec_subcommand_has_optional_flags() {
+        let cmd = build_cli_command(None, None, false);
+        let exec = cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == "exec")
+            .expect("exec subcommand must exist");
+
+        let arg_names: Vec<&str> = exec
+            .get_arguments()
+            .map(|a| a.get_id().as_str())
+            .collect();
+
+        assert!(arg_names.contains(&"input"), "exec must have --input flag");
+        assert!(arg_names.contains(&"yes"), "exec must have --yes flag");
+        assert!(arg_names.contains(&"large-input"), "exec must have --large-input flag");
+        assert!(arg_names.contains(&"format"), "exec must have --format flag");
+    }
+
+    #[test]
+    fn test_exec_subcommand_parses_valid_args() {
+        let cmd = build_cli_command(None, None, false);
+        let matches = cmd.try_get_matches_from(vec![
+            "apcore-cli", "exec", "my.module", "--yes", "--format", "json",
+        ]);
+        assert!(matches.is_ok(), "exec with valid args must parse successfully");
+        let m = matches.unwrap();
+        let sub = m.subcommand_matches("exec").unwrap();
+        assert_eq!(
+            sub.get_one::<String>("module_id").map(|s| s.as_str()),
+            Some("my.module")
+        );
+        assert!(sub.get_flag("yes"));
+        assert_eq!(
+            sub.get_one::<String>("format").map(|s| s.as_str()),
+            Some("json")
+        );
     }
 
     // --- LOG_LEVELS constant ---
