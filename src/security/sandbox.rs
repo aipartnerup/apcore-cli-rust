@@ -62,6 +62,11 @@ impl Sandbox {
         Self { enabled, timeout_ms }
     }
 
+    /// Return `true` when subprocess isolation is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     /// Execute a module, optionally in an isolated subprocess.
     ///
     /// # Arguments

@@ -72,6 +72,17 @@ impl ConfigEncryptor {
         Ok(Self::default())
     }
 
+    /// Create a `ConfigEncryptor` that always uses AES encryption, bypassing
+    /// the OS keyring. Intended for use in tests running in headless/CI environments.
+    pub fn new_forced_aes() -> Self {
+        Self { _force_aes: true }
+    }
+
+    /// Public wrapper for `_keyring_available()` for use in integration tests.
+    pub fn _keyring_available_pub(&self) -> bool {
+        self._keyring_available()
+    }
+
     // -----------------------------------------------------------------------
     // Public API
     // -----------------------------------------------------------------------
@@ -175,7 +186,7 @@ impl ConfigEncryptor {
     /// Encrypt `plaintext` and return the raw wire bytes.
     ///
     /// Wire format: `nonce[12] || tag[16] || ciphertext`.
-    fn _aes_encrypt(&self, plaintext: &str) -> Result<Vec<u8>, ConfigDecryptionError> {
+    pub(crate) fn _aes_encrypt(&self, plaintext: &str) -> Result<Vec<u8>, ConfigDecryptionError> {
         let raw_key = self._derive_key()?;
         let cipher = Aes256Gcm::new_from_slice(&raw_key)
             .map_err(|e| ConfigDecryptionError::KdfError(e.to_string()))?;
@@ -198,7 +209,7 @@ impl ConfigEncryptor {
     /// Decrypt raw wire bytes back to a UTF-8 string.
     ///
     /// Expected wire format: `nonce[12] || tag[16] || ciphertext`.
-    fn _aes_decrypt(&self, data: &[u8]) -> Result<String, ConfigDecryptionError> {
+    pub(crate) fn _aes_decrypt(&self, data: &[u8]) -> Result<String, ConfigDecryptionError> {
         if data.len() < MIN_WIRE_LEN {
             return Err(ConfigDecryptionError::AuthTagMismatch);
         }

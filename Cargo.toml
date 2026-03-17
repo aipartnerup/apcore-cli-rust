@@ -47,3 +47,19 @@ tempfile = "3"
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+[[test]]
+name = "test_audit"
+path = "tests/security/test_audit.rs"
+
+[[test]]
+name = "test_auth"
+path = "tests/security/test_auth.rs"
+
+[[test]]
+name = "test_config_encryptor"
+path = "tests/security/test_config_encryptor.rs"
+
+[[test]]
+name = "test_sandbox"
+path = "tests/security/test_sandbox.rs"
