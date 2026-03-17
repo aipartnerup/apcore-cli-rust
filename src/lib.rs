@@ -30,17 +30,29 @@ pub const EXIT_ACL_DENIED: i32 = 77;
 pub const EXIT_SIGINT: i32 = 130;
 
 // Re-export primary public types at crate root.
-pub use approval::{check_approval, ApprovalError, ApprovalTimeoutError};
+pub use approval::{check_approval, ApprovalError};
 pub use cli::{
     build_module_command, collect_input, collect_input_from_reader, set_audit_logger,
     validate_module_id,
 };
 pub use config::ConfigResolver;
-pub use discovery::register_discovery_commands;
+pub use discovery::{
+    cmd_describe, cmd_list, mock_module, register_discovery_commands, DiscoveryError,
+    MockRegistry, RegistryProvider,
+};
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
 pub use ref_resolver::resolve_refs;
 pub use schema_parser::{
     reconvert_enum_values, schema_to_clap_args, BoolFlagPair, SchemaArgs, SchemaParserError,
 };
 pub use security::{AuditLogger, AuthProvider, ConfigEncryptor, Sandbox};
-pub use shell::register_shell_commands;
+pub use shell::{
+    build_synopsis,
+    cmd_completion,
+    cmd_man,
+    completion_command,
+    generate_man_page,
+    register_shell_commands,
+    ShellError,
+    KNOWN_BUILTINS,
+};
