@@ -337,10 +337,35 @@ pub fn format_module_detail(module: &Value, format: &str) -> String {
 /// * `result` — `serde_json::Value` (the `output` field from the executor response)
 /// * `format` — `"table"` or `"json"`
 pub fn format_exec_result(result: &Value, format: &str) -> String {
-    // TODO: table → key-value comfy-table
-    //       json  → serde_json::to_string_pretty
-    let _ = (result, format);
-    todo!("format_exec_result")
+    use comfy_table::{ContentArrangement, Table};
+
+    match result {
+        Value::Null => String::new(),
+
+        Value::String(s) => s.clone(),
+
+        Value::Object(_) if format == "table" => {
+            let obj = result.as_object().unwrap(); // safe: matched Object above
+            let mut table = Table::new();
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec!["Key", "Value"]);
+            for (k, v) in obj {
+                let val_str = match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                table.add_row(vec![k.clone(), val_str]);
+            }
+            table.to_string()
+        }
+
+        Value::Object(_) | Value::Array(_) => {
+            serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".to_string())
+        }
+
+        // Number, Bool — convert to display string.
+        other => other.to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -492,17 +517,86 @@ mod tests {
         assert_eq!(tags[0], "x");
     }
 
-    // Placeholder tests for future tasks (kept to avoid removing stubs needed by other tasks)
+    // --- format_exec_result ---
+
     #[test]
-    fn test_format_exec_result_json() {
-        // TODO: verify execution result JSON round-trips correctly.
-        assert!(false, "not implemented");
+    fn test_format_exec_result_null_returns_empty() {
+        let output = format_exec_result(&Value::Null, "json");
+        assert_eq!(output, "", "Null result must produce empty string");
     }
 
     #[test]
-    fn test_format_exec_result_table() {
-        // TODO: verify table output contains result key-value pairs.
-        assert!(false, "not implemented");
+    fn test_format_exec_result_string_plain() {
+        let result = json!("hello world");
+        let output = format_exec_result(&result, "json");
+        assert_eq!(output, "hello world");
+    }
+
+    #[test]
+    fn test_format_exec_result_string_table_mode_also_plain() {
+        // Strings are always printed raw, regardless of format.
+        let result = json!("hello");
+        let output = format_exec_result(&result, "table");
+        assert_eq!(output, "hello");
+    }
+
+    #[test]
+    fn test_format_exec_result_object_json_mode() {
+        let result = json!({"sum": 42, "status": "ok"});
+        let output = format_exec_result(&result, "json");
+        let parsed: serde_json::Value = serde_json::from_str(&output).expect("must be valid JSON");
+        assert_eq!(parsed["sum"], 42);
+        assert_eq!(parsed["status"], "ok");
+    }
+
+    #[test]
+    fn test_format_exec_result_object_table_mode() {
+        let result = json!({"key": "value", "count": 3});
+        let output = format_exec_result(&result, "table");
+        // Table must contain both keys and their values.
+        assert!(output.contains("key"), "table must contain 'key'");
+        assert!(output.contains("value"), "table must contain 'value'");
+        assert!(output.contains("count"), "table must contain 'count'");
+        assert!(output.contains('3'), "table must contain '3'");
+    }
+
+    #[test]
+    fn test_format_exec_result_array_is_json() {
+        let result = json!([1, 2, 3]);
+        let output = format_exec_result(&result, "json");
+        let parsed: serde_json::Value = serde_json::from_str(&output).expect("must be valid JSON");
+        assert!(parsed.is_array());
+        assert_eq!(parsed.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_format_exec_result_array_table_mode_is_json() {
+        // Arrays always render as JSON, even in table mode.
+        let result = json!([{"a": 1}, {"b": 2}]);
+        let output = format_exec_result(&result, "table");
+        let parsed: serde_json::Value = serde_json::from_str(&output).expect("array must produce JSON");
+        assert!(parsed.is_array());
+    }
+
+    #[test]
+    fn test_format_exec_result_number_scalar() {
+        let result = json!(42);
+        let output = format_exec_result(&result, "json");
+        assert_eq!(output, "42");
+    }
+
+    #[test]
+    fn test_format_exec_result_bool_scalar() {
+        let result = json!(true);
+        let output = format_exec_result(&result, "json");
+        assert_eq!(output, "true");
+    }
+
+    #[test]
+    fn test_format_exec_result_float_scalar() {
+        let result = json!(3.14);
+        let output = format_exec_result(&result, "json");
+        assert!(output.starts_with("3.14"), "float must stringify correctly");
     }
 
     // --- format_module_detail ---
