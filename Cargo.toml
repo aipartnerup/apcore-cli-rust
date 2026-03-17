@@ -49,6 +49,10 @@ tempfile = "3"
 tokio-test = "0.4"
 
 [[test]]
+name = "approval_integration"
+path = "tests/approval_integration.rs"
+
+[[test]]
 name = "test_audit"
 path = "tests/security/test_audit.rs"
 
