@@ -23,7 +23,7 @@ pub fn create_cli(extensions_dir: Option<String>, prog_name: Option<String>) -> 
         }
     }
 
-    clap::Command::new(name)
+    clap::Command::new("apcore-cli")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Command-line interface for apcore modules")
     // TODO: add subcommands and global flags
