@@ -60,7 +60,10 @@ The repo includes 8 example modules you can run immediately:
 ```bash
 git clone https://github.com/aipartnerup/apcore-cli-rust.git
 cd apcore-cli-rust
-cargo build --release
+make build                       # compile release binary to .bin/
+
+# Add .bin to PATH for this session
+export PATH=.bin:$PATH
 
 # Run a module
 apcore-cli --extensions-dir examples/extensions math.add --a 5 --b 10
@@ -75,6 +78,10 @@ apcore-cli --extensions-dir examples/extensions list --format json
 # Run all examples
 bash examples/run_examples.sh
 ```
+
+> **Note:** If you have the Python version of `apcore-cli` installed, `make build` places
+> the Rust binary at `.bin/apcore-cli`. Prepend `.bin` to your PATH (as shown above) to
+> use the Rust version in this project.
 
 See [Examples](#examples) for the full list of example modules and usage patterns.
 
@@ -275,12 +282,17 @@ apcore Registry + Executor (your modules, unchanged)
 git clone https://github.com/aipartnerup/apcore-cli-rust.git
 cd apcore-cli-rust
 make setup                       # install apdev-rs + git pre-commit hook
-cargo build                      # debug build
+make build                       # compile release binary to .bin/
+export PATH=.bin:$PATH           # use Rust version in this session
 ```
 
 ### Daily Workflow
 
 ```bash
+# Build and run
+make build                       # release build + symlink to .bin/apcore-cli
+apcore-cli --extensions-dir examples/extensions list
+
 # Run all checks (same as pre-commit hook: fmt + clippy + tests)
 make check
 
@@ -288,10 +300,6 @@ make check
 cargo fmt --all -- --check       # formatting check
 cargo clippy --all-targets --all-features -- -D warnings   # lint
 cargo test --all-features        # 458 tests
-
-# Build release binary
-cargo build --release
-./target/release/apcore-cli --extensions-dir examples/extensions list
 ```
 
 ### Adding a New Module Descriptor
@@ -329,43 +337,6 @@ extensions/
 
 The CLI auto-discovers all `module.json` files recursively under `--extensions-dir`.
 
-### Project Structure
-
-```
-src/
-├── lib.rs                   # Library root, public API re-exports
-├── main.rs                  # Binary entry point, clap wiring, dispatch
-├── cli.rs                   # LazyModuleGroup, build_module_command, collect_input, dispatch_module
-├── config.rs                # ConfigResolver (4-tier precedence)
-├── schema_parser.rs         # JSON Schema -> clap options
-├── ref_resolver.rs          # $ref / allOf / anyOf / oneOf resolution
-├── output.rs                # TTY-adaptive output formatting (comfy-table)
-├── discovery.rs             # list / describe commands, RegistryProvider trait
-├── fs_discoverer.rs         # Filesystem module.json scanner (Discoverer impl)
-├── approval.rs              # HITL approval gate with tokio timeout
-├── shell.rs                 # bash/zsh/fish/elvish/powershell completion + man pages
-├── _sandbox_runner.rs       # Subprocess entry point for sandboxed execution
-└── security/
-    ├── mod.rs                # Exports
-    ├── auth.rs               # API key authentication (Bearer header)
-    ├── config_encryptor.rs   # Keyring + AES-256-GCM encrypted config
-    ├── audit.rs              # JSON Lines audit logging (SHA-256 hashed inputs)
-    └── sandbox.rs            # tokio subprocess-based execution isolation
-
-tests/
-├── test_cli.rs              # CLI dispatcher tests
-├── test_config.rs           # ConfigResolver tests
-├── test_schema_parser.rs    # Schema-to-clap tests
-├── test_ref_resolver.rs     # $ref resolution tests
-├── test_output.rs           # Output formatting tests
-├── test_discovery.rs        # Discovery command tests
-├── test_approval.rs         # Approval gate unit tests
-├── approval_integration.rs  # Approval gate integration tests
-├── test_shell.rs            # Shell completion + man page tests
-├── test_e2e.rs              # End-to-end binary tests
-├── test_integration.rs      # Cross-component integration tests
-└── security/                # Auth, audit, encryptor, sandbox tests
-```
 
 ### Key Dependencies
 
