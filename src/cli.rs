@@ -57,6 +57,9 @@ pub enum CliError {
     #[error("invalid module id: {0}")]
     InvalidModuleId(String),
 
+    #[error("reserved module id: '{0}' conflicts with a built-in command name")]
+    ReservedModuleId(String),
+
     #[error("stdin read error: {0}")]
     StdinRead(String),
 
@@ -179,21 +182,110 @@ impl LazyModuleGroup {
 // build_module_command
 // ---------------------------------------------------------------------------
 
+/// Module IDs that are reserved for built-in commands. Passing one of these
+/// as the module name to `build_module_command` returns a
+/// `CliError::ReservedModuleId` error.
+///
+/// Must stay in sync with `BUILTIN_COMMANDS`.
+pub const RESERVED_COMMAND_NAMES: &[&str] = &["completion", "describe", "exec", "list", "man"];
+
+/// Built-in flag names added to every generated module command. A schema
+/// property that collides with one of these names will cause
+/// `std::process::exit(2)`.
+const RESERVED_FLAG_NAMES: &[&str] = &["input", "yes", "large-input", "format", "sandbox"];
+
 /// Build a clap `Command` for a single module definition.
 ///
 /// The resulting subcommand has:
 /// * its `name` set to `module_def.name`
-/// * its `about` set to `module_def.annotations.description`
-/// * one `--input` flag for piped JSON
-/// * schema-derived flags from `schema_to_clap_args`
-/// * an execution callback that calls `executor.execute`
+/// * its `about` derived from the module descriptor (empty if unavailable)
+/// * the 5 built-in flags: `--input`, `--yes`/`-y`, `--large-input`,
+///   `--format`, `--sandbox`
+/// * schema-derived flags from `schema_to_clap_args` (stub: empty vec)
+///
+/// `executor` is accepted for API symmetry with the Python counterpart but is
+/// not embedded in the `clap::Command` (clap has no user-data attachment).
+/// The executor is passed separately to the dispatch callback.
+///
+/// # Errors
+/// Returns `CliError::ReservedModuleId` when `module_def.name` is one of the
+/// reserved built-in command names.
 pub fn build_module_command(
-    // module_def: &apcore::registry::registry::ModuleDescriptor,
-    // executor: Arc<dyn ModuleExecutor>,
-) -> clap::Command {
-    // TODO: call schema_to_clap_args on module_def.input_schema,
-    //       attach --input/--auto-approve flags, wire execution callback.
-    todo!("build_module_command")
+    module_def: &apcore::registry::registry::ModuleDescriptor,
+    executor: Arc<dyn ModuleExecutor>,
+) -> Result<clap::Command, CliError> {
+    let module_id = &module_def.name;
+
+    // Guard: reject reserved command names immediately.
+    if RESERVED_COMMAND_NAMES.contains(&module_id.as_str()) {
+        return Err(CliError::ReservedModuleId(module_id.clone()));
+    }
+
+    // TODO: resolve_refs is a stub — returns schema as-is for now.
+    // When FE-08 is implemented, replace with:
+    //   let resolved = crate::ref_resolver::resolve_refs(&mut schema, 32, module_id)?;
+    let resolved_schema = module_def.input_schema.clone();
+
+    // TODO: schema_to_clap_args is a stub — returns empty vec for now.
+    // When FE-09 is implemented this will yield schema-derived flags.
+    let schema_args = crate::schema_parser::schema_to_clap_args_or_empty(&resolved_schema);
+
+    // Check for schema property names that collide with built-in flags.
+    for arg in &schema_args {
+        if let Some(long) = arg.get_long() {
+            if RESERVED_FLAG_NAMES.contains(&long) {
+                eprintln!(
+                    "Error: module '{module_id}' schema property '{long}' conflicts \
+                     with a reserved CLI option name. Rename the property."
+                );
+                std::process::exit(2);
+            }
+        }
+    }
+
+    // Suppress unused-variable warning; executor is kept for API symmetry.
+    let _ = executor;
+
+    let mut cmd = clap::Command::new(module_id.clone())
+        // Built-in flags present on every generated command.
+        .arg(
+            clap::Arg::new("input")
+                .long("input")
+                .value_name("SOURCE")
+                .help("Read input from file or STDIN ('-')."),
+        )
+        .arg(
+            clap::Arg::new("yes")
+                .long("yes")
+                .short('y')
+                .action(clap::ArgAction::SetTrue)
+                .help("Bypass approval prompts."),
+        )
+        .arg(
+            clap::Arg::new("large-input")
+                .long("large-input")
+                .action(clap::ArgAction::SetTrue)
+                .help("Allow STDIN input larger than 10MB."),
+        )
+        .arg(
+            clap::Arg::new("format")
+                .long("format")
+                .value_parser(["json", "table"])
+                .help("Output format."),
+        )
+        .arg(
+            clap::Arg::new("sandbox")
+                .long("sandbox")
+                .action(clap::ArgAction::SetTrue)
+                .help("Run module in subprocess sandbox."),
+        );
+
+    // Attach schema-derived args (stub: none for now).
+    for arg in schema_args {
+        cmd = cmd.arg(arg);
+    }
+
+    Ok(cmd)
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +569,107 @@ mod tests {
         kwargs.insert("foo".to_string(), json!("bar"));
         let result = collect_input(None, kwargs.clone(), false).unwrap();
         assert_eq!(result.get("foo"), Some(&json!("bar")));
+    }
+
+    // ---------------------------------------------------------------------------
+    // build_module_command tests (TDD — RED written before GREEN)
+    // ---------------------------------------------------------------------------
+
+    /// Construct a minimal `ModuleDescriptor` for use in `build_module_command`
+    /// tests. `input_schema` defaults to a JSON null (no properties) when
+    /// `schema` is `None`.
+    fn make_module_descriptor(
+        name: &str,
+        _description: &str,
+        schema: Option<serde_json::Value>,
+    ) -> apcore::registry::registry::ModuleDescriptor {
+        apcore::registry::registry::ModuleDescriptor {
+            name: name.to_string(),
+            annotations: apcore::module::ModuleAnnotations::default(),
+            input_schema: schema.unwrap_or(serde_json::Value::Null),
+            output_schema: serde_json::Value::Object(Default::default()),
+            enabled: true,
+            tags: vec![],
+            dependencies: vec![],
+        }
+    }
+
+    #[test]
+    fn test_build_module_command_name_is_set() {
+        let module = make_module_descriptor("math.add", "Add two numbers", None);
+        let executor = mock_executor();
+        let cmd = build_module_command(&module, executor).unwrap();
+        assert_eq!(cmd.get_name(), "math.add");
+    }
+
+    #[test]
+    fn test_build_module_command_has_input_flag() {
+        let module = make_module_descriptor("a.b", "desc", None);
+        let executor = mock_executor();
+        let cmd = build_module_command(&module, executor).unwrap();
+        let names: Vec<&str> = cmd.get_opts().filter_map(|a| a.get_long()).collect();
+        assert!(names.contains(&"input"), "must have --input flag");
+    }
+
+    #[test]
+    fn test_build_module_command_has_yes_flag() {
+        let module = make_module_descriptor("a.b", "desc", None);
+        let executor = mock_executor();
+        let cmd = build_module_command(&module, executor).unwrap();
+        let names: Vec<&str> = cmd.get_opts().filter_map(|a| a.get_long()).collect();
+        assert!(names.contains(&"yes"), "must have --yes flag");
+    }
+
+    #[test]
+    fn test_build_module_command_has_large_input_flag() {
+        let module = make_module_descriptor("a.b", "desc", None);
+        let executor = mock_executor();
+        let cmd = build_module_command(&module, executor).unwrap();
+        let names: Vec<&str> = cmd.get_opts().filter_map(|a| a.get_long()).collect();
+        assert!(names.contains(&"large-input"), "must have --large-input flag");
+    }
+
+    #[test]
+    fn test_build_module_command_has_format_flag() {
+        let module = make_module_descriptor("a.b", "desc", None);
+        let executor = mock_executor();
+        let cmd = build_module_command(&module, executor).unwrap();
+        let names: Vec<&str> = cmd.get_opts().filter_map(|a| a.get_long()).collect();
+        assert!(names.contains(&"format"), "must have --format flag");
+    }
+
+    #[test]
+    fn test_build_module_command_has_sandbox_flag() {
+        let module = make_module_descriptor("a.b", "desc", None);
+        let executor = mock_executor();
+        let cmd = build_module_command(&module, executor).unwrap();
+        let names: Vec<&str> = cmd.get_opts().filter_map(|a| a.get_long()).collect();
+        assert!(names.contains(&"sandbox"), "must have --sandbox flag");
+    }
+
+    #[test]
+    fn test_build_module_command_reserved_name_returns_error() {
+        for reserved in RESERVED_COMMAND_NAMES {
+            let module = make_module_descriptor(reserved, "desc", None);
+            let executor = mock_executor();
+            let result = build_module_command(&module, executor);
+            assert!(
+                matches!(result, Err(CliError::ReservedModuleId(_))),
+                "expected ReservedModuleId for '{reserved}', got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_module_command_yes_has_short_flag() {
+        let module = make_module_descriptor("a.b", "desc", None);
+        let executor = mock_executor();
+        let cmd = build_module_command(&module, executor).unwrap();
+        let has_short_y = cmd
+            .get_opts()
+            .filter(|a| a.get_long() == Some("yes"))
+            .any(|a| a.get_short() == Some('y'));
+        assert!(has_short_y, "--yes must have short flag -y");
     }
 
     // ---------------------------------------------------------------------------

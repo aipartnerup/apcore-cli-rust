@@ -27,6 +27,16 @@ pub fn schema_to_clap_args(schema: &Value) -> Vec<clap::Arg> {
     todo!("schema_to_clap_args")
 }
 
+/// Stub version of `schema_to_clap_args` used by `build_module_command` until
+/// FE-09 is implemented. Always returns an empty `Vec` so that
+/// `build_module_command` can be exercised without depending on the unfinished
+/// schema translator.
+///
+/// TODO(FE-09): replace call sites with `schema_to_clap_args` once implemented.
+pub fn schema_to_clap_args_or_empty(_schema: &Value) -> Vec<clap::Arg> {
+    vec![]
+}
+
 // ---------------------------------------------------------------------------
 // reconvert_enum_values
 // ---------------------------------------------------------------------------
