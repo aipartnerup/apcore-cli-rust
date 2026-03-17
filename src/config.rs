@@ -35,9 +35,10 @@ impl ConfigResolver {
     /// Default configuration values.
     pub const DEFAULTS: &'static [(&'static str, &'static str)] = &[
         ("extensions.root", "./extensions"),
-        ("logging.level", "WARNING"),
+        ("logging.level", "INFO"),
         ("sandbox.enabled", "false"),
         ("cli.stdin_buffer_limit", "10485760"),
+        ("cli.auto_approve", "false"),
     ];
 
     /// Create a new `ConfigResolver`.
@@ -96,6 +97,8 @@ impl ConfigResolver {
     /// Recursively flatten a nested map into dot-separated keys.
     ///
     /// Example: `{"extensions": {"root": "/path"}}` → `{"extensions.root": "/path"}`
+    // Public flatten method for JSON callers (e.g. tests, external consumers).
+    // Internal YAML loading uses the private `flatten_yaml_value` helper instead.
     pub fn flatten_dict(&self, map: serde_json::Value) -> HashMap<String, String> {
         // TODO: implement recursive flattening.
         let _ = map;
@@ -125,9 +128,30 @@ mod tests {
             "logging.level",
             "sandbox.enabled",
             "cli.stdin_buffer_limit",
+            "cli.auto_approve",
         ] {
             assert!(resolver.defaults.contains_key(key), "missing default: {key}");
         }
+    }
+
+    #[test]
+    fn test_default_logging_level_is_info() {
+        let resolver = ConfigResolver::new(None, None);
+        assert_eq!(
+            resolver.defaults.get("logging.level"),
+            Some(&"INFO"),
+            "logging.level default must be INFO, not WARNING"
+        );
+    }
+
+    #[test]
+    fn test_default_auto_approve_is_false() {
+        let resolver = ConfigResolver::new(None, None);
+        assert_eq!(
+            resolver.defaults.get("cli.auto_approve"),
+            Some(&"false"),
+            "cli.auto_approve default must be false"
+        );
     }
 
     #[test]
