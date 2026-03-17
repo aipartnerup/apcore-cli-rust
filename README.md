@@ -267,6 +267,120 @@ apcore-cli (the adapter)
 apcore Registry + Executor (your modules, unchanged)
 ```
 
+## Development
+
+### Getting Started
+
+```bash
+git clone https://github.com/aipartnerup/apcore-cli-rust.git
+cd apcore-cli-rust
+make setup                       # install apdev-rs + git pre-commit hook
+cargo build                      # debug build
+```
+
+### Daily Workflow
+
+```bash
+# Run all checks (same as pre-commit hook: fmt + clippy + tests)
+make check
+
+# Run individual steps
+cargo fmt --all -- --check       # formatting check
+cargo clippy --all-targets --all-features -- -D warnings   # lint
+cargo test --all-features        # 458 tests
+
+# Build release binary
+cargo build --release
+./target/release/apcore-cli --extensions-dir examples/extensions list
+```
+
+### Adding a New Module Descriptor
+
+Each module is discovered via a `module.json` file in the extensions directory:
+
+```
+extensions/
+└── math/
+    └── add/
+        └── module.json          <- descriptor file
+```
+
+```json
+{
+  "name": "math.add",
+  "description": "Add two integers and return their sum",
+  "tags": ["math"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "a": { "type": "integer", "description": "First operand" },
+      "b": { "type": "integer", "description": "Second operand" }
+    },
+    "required": ["a", "b"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "sum": { "type": "integer" }
+    }
+  }
+}
+```
+
+The CLI auto-discovers all `module.json` files recursively under `--extensions-dir`.
+
+### Project Structure
+
+```
+src/
+├── lib.rs                   # Library root, public API re-exports
+├── main.rs                  # Binary entry point, clap wiring, dispatch
+├── cli.rs                   # LazyModuleGroup, build_module_command, collect_input, dispatch_module
+├── config.rs                # ConfigResolver (4-tier precedence)
+├── schema_parser.rs         # JSON Schema -> clap options
+├── ref_resolver.rs          # $ref / allOf / anyOf / oneOf resolution
+├── output.rs                # TTY-adaptive output formatting (comfy-table)
+├── discovery.rs             # list / describe commands, RegistryProvider trait
+├── fs_discoverer.rs         # Filesystem module.json scanner (Discoverer impl)
+├── approval.rs              # HITL approval gate with tokio timeout
+├── shell.rs                 # bash/zsh/fish/elvish/powershell completion + man pages
+├── _sandbox_runner.rs       # Subprocess entry point for sandboxed execution
+└── security/
+    ├── mod.rs                # Exports
+    ├── auth.rs               # API key authentication (Bearer header)
+    ├── config_encryptor.rs   # Keyring + AES-256-GCM encrypted config
+    ├── audit.rs              # JSON Lines audit logging (SHA-256 hashed inputs)
+    └── sandbox.rs            # tokio subprocess-based execution isolation
+
+tests/
+├── test_cli.rs              # CLI dispatcher tests
+├── test_config.rs           # ConfigResolver tests
+├── test_schema_parser.rs    # Schema-to-clap tests
+├── test_ref_resolver.rs     # $ref resolution tests
+├── test_output.rs           # Output formatting tests
+├── test_discovery.rs        # Discovery command tests
+├── test_approval.rs         # Approval gate unit tests
+├── approval_integration.rs  # Approval gate integration tests
+├── test_shell.rs            # Shell completion + man page tests
+├── test_e2e.rs              # End-to-end binary tests
+├── test_integration.rs      # Cross-component integration tests
+└── security/                # Auth, audit, encryptor, sandbox tests
+```
+
+### Key Dependencies
+
+| Crate | Purpose |
+|-------|---------|
+| `clap 4` | CLI framework (derive + env + string) |
+| `tokio 1` | Async runtime (process, signal, time) |
+| `serde` / `serde_json` / `serde_yaml` | Serialization |
+| `comfy-table 6` | Terminal table rendering |
+| `aes-gcm` / `sha2` / `pbkdf2` | Cryptography |
+| `keyring 2` | OS keyring access |
+| `clap_complete 4` | Shell completion generation |
+| `thiserror` / `anyhow` | Error handling |
+| `tracing` | Structured logging |
+
 ## Examples
 
 The `examples/extensions/` directory contains 8 runnable modules:
@@ -313,31 +427,6 @@ apcore-cli man list | man -l -
 # Run all examples at once
 bash examples/run_examples.sh
 ```
-
-## Development
-
-```bash
-git clone https://github.com/aipartnerup/apcore-cli-rust.git
-cd apcore-cli-rust
-make setup                       # install dev tools + git hook
-cargo build                      # build
-make check                       # fmt + clippy + tests (same as pre-commit)
-cargo test --all-features        # 452 tests
-```
-
-### Key Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| `clap 4` | CLI framework (derive + env + string) |
-| `tokio 1` | Async runtime (process, signal, time) |
-| `serde` / `serde_json` / `serde_yaml` | Serialization |
-| `comfy-table 6` | Terminal table rendering |
-| `aes-gcm` / `sha2` / `pbkdf2` | Cryptography |
-| `keyring 2` | OS keyring access |
-| `clap_complete 4` | Shell completion generation |
-| `thiserror` / `anyhow` | Error handling |
-| `tracing` | Structured logging |
 
 ## License
 
