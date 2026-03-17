@@ -184,7 +184,7 @@ pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserErr
 
     let mut args: Vec<Arg> = Vec::new();
     let mut bool_pairs: Vec<BoolFlagPair> = Vec::new();
-    let enum_maps: HashMap<String, Vec<Value>> = HashMap::new(); // populated in enum-choices task
+    let mut enum_maps: HashMap<String, Vec<Value>> = HashMap::new();
     let mut seen_flags: HashMap<String, String> = HashMap::new(); // flag_long → prop_name
 
     for (prop_name, prop_schema) in properties {
@@ -244,9 +244,55 @@ pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserErr
             continue;
         }
 
-        // Enum is handled in enum-choices task — skip for now.
-        if prop_schema.get("enum").is_some() {
-            continue;
+        // Enum handling: properties with an "enum" array (and type != "boolean").
+        if let Some(enum_values) = prop_schema.get("enum").and_then(|v| v.as_array()) {
+            if enum_values.is_empty() {
+                warn!(
+                    "Empty enum for property '{}', falling through to plain string arg.",
+                    prop_name
+                );
+                // Fall through to plain string arg below.
+            } else {
+                // Convert all enum values to String for clap's PossibleValuesParser.
+                let string_values: Vec<String> = enum_values
+                    .iter()
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .collect();
+
+                // Store original typed values for post-parse reconversion.
+                enum_maps.insert(prop_name.clone(), enum_values.to_vec());
+
+                let mut arg = Arg::new(prop_name.clone())
+                    .long(flag_long)
+                    .value_parser(clap::builder::PossibleValuesParser::new(string_values))
+                    .required(false); // required enforced post-parse for STDIN compatibility
+
+                // Attach help text with optional [required] annotation.
+                if let Some(help) = help_text {
+                    let annotated = if is_required {
+                        format!("{} [required]", help)
+                    } else {
+                        help
+                    };
+                    arg = arg.help(annotated);
+                } else if is_required {
+                    arg = arg.help("[required]");
+                }
+
+                if let Some(dv) = default_val {
+                    let dv_str = match dv {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    arg = arg.default_value(dv_str);
+                }
+
+                args.push(arg);
+                continue;
+            }
         }
 
         // Build Arg using map_type.
@@ -291,21 +337,67 @@ pub fn schema_to_clap_args_or_empty(_schema: &Value) -> Vec<clap::Arg> {
 ///
 /// clap always produces `String` values; this function converts them to the
 /// correct JSON type (number, boolean, null) based on the original schema
-/// definition.
+/// definition stored in `schema_args.enum_maps`.
 ///
 /// # Arguments
-/// * `kwargs` — raw CLI arguments map (string values from clap)
-/// * `args`   — the clap `Arg` list produced by `schema_to_clap_args`
+/// * `kwargs`      — raw CLI arguments map (string values from clap)
+/// * `schema_args` — the SchemaArgs produced by `schema_to_clap_args`
 ///
-/// Returns a new map with values converted to their correct JSON types.
+/// Returns a new map with enum values converted to their correct JSON types.
+/// Non-enum keys and Null values pass through unchanged.
 pub fn reconvert_enum_values(
     kwargs: HashMap<String, Value>,
-    args: &[clap::Arg],
+    schema_args: &SchemaArgs,
 ) -> HashMap<String, Value> {
-    // TODO: for each kwarg, check the matching Arg's enum variants and
-    //       coerce the string value to the correct JSON type.
-    let _ = (kwargs, args);
-    todo!("reconvert_enum_values")
+    let mut result = kwargs;
+
+    for (key, original_variants) in &schema_args.enum_maps {
+        let val = match result.get(key) {
+            Some(v) => v.clone(),
+            None => continue,
+        };
+
+        // Skip null / non-string values (absent optional args arrive as Null).
+        let str_val = match &val {
+            Value::String(s) => s.clone(),
+            _ => continue,
+        };
+
+        // Find the original variant whose string representation matches str_val.
+        let original = original_variants.iter().find(|v| {
+            let as_str = match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            as_str == str_val
+        });
+
+        if let Some(orig) = original {
+            let converted = match orig {
+                Value::Number(n) => {
+                    if n.as_i64().is_some() {
+                        str_val
+                            .parse::<i64>()
+                            .ok()
+                            .map(|i| Value::Number(i.into()))
+                            .unwrap_or(val.clone())
+                    } else {
+                        str_val
+                            .parse::<f64>()
+                            .ok()
+                            .and_then(serde_json::Number::from_f64)
+                            .map(Value::Number)
+                            .unwrap_or(val.clone())
+                    }
+                }
+                Value::Bool(_) => Value::Bool(str_val.to_lowercase() == "true"),
+                _ => val.clone(), // String: keep as-is
+            };
+            result.insert(key.clone(), converted);
+        }
+    }
+
+    result
 }
 
 // ---------------------------------------------------------------------------
