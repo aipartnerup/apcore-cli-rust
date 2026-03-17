@@ -1,0 +1,19 @@
+{
+  "name": "math.add",
+  "description": "Add two integers and return their sum",
+  "tags": ["math"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "a": { "type": "integer", "description": "First operand" },
+      "b": { "type": "integer", "description": "Second operand" }
+    },
+    "required": ["a", "b"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "sum": { "type": "integer", "description": "The sum of a and b" }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "sysutil.env",
+  "description": "Read an environment variable value",
+  "tags": ["sysutil"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Environment variable name to read" },
+      "default": { "type": "string", "description": "Value to return if the variable is not set" }
+    },
+    "required": ["name"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "The environment variable name" },
+      "value": { "type": "string", "description": "The resolved value" },
+      "exists": { "type": "boolean", "description": "Whether the variable was set" }
+    }
+  }
+}

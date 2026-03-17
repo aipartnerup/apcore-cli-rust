@@ -1,0 +1,21 @@
+{
+  "name": "sysutil.disk",
+  "description": "Get disk usage statistics for a given filesystem path",
+  "tags": ["sysutil"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "Filesystem path to check (default: \"/\")" }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "The queried path" },
+      "total": { "type": "string", "description": "Total capacity (human-readable)" },
+      "used": { "type": "string", "description": "Used space (human-readable)" },
+      "free": { "type": "string", "description": "Free space (human-readable)" },
+      "percent_used": { "type": "number", "description": "Percentage of used space (0.0-100.0)" }
+    }
+  }
+}

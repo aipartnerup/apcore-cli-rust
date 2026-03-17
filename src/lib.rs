@@ -6,6 +6,7 @@ pub mod approval;
 pub mod cli;
 pub mod config;
 pub mod discovery;
+pub mod fs_discoverer;
 pub mod output;
 pub mod ref_resolver;
 pub mod schema_parser;
@@ -46,6 +47,7 @@ pub use discovery::{
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub use discovery::{mock_module, MockRegistry};
+pub use fs_discoverer::FsDiscoverer;
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
 pub use ref_resolver::resolve_refs;
 pub use schema_parser::{

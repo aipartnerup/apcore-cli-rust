@@ -1,0 +1,18 @@
+{
+  "name": "text.reverse",
+  "description": "Reverse a string character by character",
+  "tags": ["text"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "Input string to reverse" }
+    },
+    "required": ["text"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "result": { "type": "string", "description": "The reversed string" }
+    }
+  }
+}

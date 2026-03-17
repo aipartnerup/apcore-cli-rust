@@ -1,0 +1,18 @@
+{
+  "name": "text.upper",
+  "description": "Convert a string to uppercase",
+  "tags": ["text"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "Input string to convert to uppercase" }
+    },
+    "required": ["text"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "result": { "type": "string", "description": "The uppercased result" }
+    }
+  }
+}

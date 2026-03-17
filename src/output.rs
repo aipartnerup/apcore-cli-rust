@@ -128,7 +128,7 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
             table.set_header(vec!["ID", "Description", "Tags"]);
 
             for m in modules {
-                let id = extract_str(m, &["module_id", "id", "canonical_id"]);
+                let id = extract_str(m, &["module_id", "id", "canonical_id", "name"]);
                 let desc_raw = extract_str(m, &["description"]);
                 let desc = truncate(desc_raw, DESCRIPTION_TRUNCATE_LEN);
                 let tags = extract_tags(m).join(", ");
@@ -141,7 +141,7 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
             let result: Vec<serde_json::Value> = modules
                 .iter()
                 .map(|m| {
-                    let id = extract_str(m, &["module_id", "id", "canonical_id"]);
+                    let id = extract_str(m, &["module_id", "id", "canonical_id", "name"]);
                     let desc = extract_str(m, &["description"]);
                     let tags: Vec<serde_json::Value> = extract_tags(m)
                         .into_iter()
@@ -195,7 +195,7 @@ fn render_section(title: &str, content: &str) -> Option<String> {
 /// * `module` — `serde_json::Value` module descriptor
 /// * `format` — `"table"` or `"json"`
 pub fn format_module_detail(module: &Value, format: &str) -> String {
-    let id = extract_str(module, &["module_id", "id", "canonical_id"]);
+    let id = extract_str(module, &["module_id", "id", "canonical_id", "name"]);
     let description = extract_str(module, &["description"]);
 
     match format {

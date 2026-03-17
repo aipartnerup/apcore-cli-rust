@@ -1,0 +1,20 @@
+{
+  "name": "text.wordcount",
+  "description": "Count words, characters, and lines in a text string",
+  "tags": ["text"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "Input text to analyse" }
+    },
+    "required": ["text"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "characters": { "type": "integer", "description": "Total number of Unicode characters" },
+      "words": { "type": "integer", "description": "Number of whitespace-delimited words" },
+      "lines": { "type": "integer", "description": "Number of newline-delimited lines" }
+    }
+  }
+}

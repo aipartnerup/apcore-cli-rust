@@ -246,14 +246,42 @@ async fn main() {
     }
 
     // Build shared registry, executor, and apcore executor for dispatch.
-    let registry = apcore::Registry::new();
+    // Discover modules from the extensions directory when available.
+    let extensions_dir_for_discovery = matches
+        .get_one::<String>("extensions-dir")
+        .cloned()
+        .or_else(|| {
+            std::env::var("APCORE_EXTENSIONS_ROOT")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "./extensions".to_string());
+
+    let mut registry = apcore::Registry::new();
+    let discoverer = apcore_cli::FsDiscoverer::new(&extensions_dir_for_discovery);
+    let discovered_names = match registry.discover(&discoverer).await {
+        Ok(names) => names,
+        Err(e) => {
+            tracing::warn!("Module discovery failed: {e}");
+            Vec::new()
+        }
+    };
+
+    let mut exec_registry = apcore::Registry::new();
+    if let Err(e) = exec_registry.discover(&discoverer).await {
+        tracing::warn!("Module discovery failed for executor registry: {e}");
+    }
+
+    let mut provider = apcore_cli::discovery::ApCoreRegistryProvider::new(registry);
+    provider.set_discovered_names(discovered_names);
+    provider.set_descriptions(discoverer.load_descriptions());
     let registry_provider: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
-        std::sync::Arc::new(apcore_cli::discovery::ApCoreRegistryProvider::new(registry));
+        std::sync::Arc::new(provider);
     let executor: std::sync::Arc<dyn apcore_cli::ModuleExecutor> =
         std::sync::Arc::new(apcore_cli::cli::ApCoreExecutorAdapter(
             apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
         ));
-    let apcore_executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+    let apcore_executor = apcore::Executor::new(exec_registry, apcore::Config::default());
 
     let prog_name = resolve_prog_name(None);
 

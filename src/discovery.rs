@@ -219,30 +219,67 @@ fn describe_command() -> Command {
 // ---------------------------------------------------------------------------
 
 /// Adapter that implements `RegistryProvider` for the real `apcore::Registry`.
+///
+/// Tracks discovered module names separately because `Registry::discover()`
+/// stores descriptors but not module implementations, so `Registry::list()`
+/// (which iterates over the modules map) would miss them.
 pub struct ApCoreRegistryProvider {
     registry: apcore::Registry,
+    discovered_names: Vec<String>,
+    descriptions: std::collections::HashMap<String, String>,
 }
 
 impl ApCoreRegistryProvider {
     /// Create a new adapter from a real apcore::Registry.
     pub fn new(registry: apcore::Registry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            discovered_names: Vec::new(),
+            descriptions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Record names of modules found via discovery so they appear in `list()`.
+    pub fn set_discovered_names(&mut self, names: Vec<String>) {
+        self.discovered_names = names;
+    }
+
+    /// Store module descriptions loaded from module.json files.
+    pub fn set_descriptions(&mut self, descriptions: std::collections::HashMap<String, String>) {
+        self.descriptions = descriptions;
     }
 }
 
 impl RegistryProvider for ApCoreRegistryProvider {
     fn list(&self) -> Vec<String> {
-        self.registry
+        let mut ids: Vec<String> = self
+            .registry
             .list(None, None)
             .iter()
             .map(|s| s.to_string())
-            .collect()
+            .collect();
+        for name in &self.discovered_names {
+            if !ids.contains(name) {
+                ids.push(name.clone());
+            }
+        }
+        ids
     }
 
     fn get_definition(&self, id: &str) -> Option<Value> {
         self.registry
             .get_definition(id)
             .and_then(|d| serde_json::to_value(d).ok())
+            .map(|mut v| {
+                // Inject description from discovery metadata if available,
+                // since ModuleDescriptor does not carry a description field.
+                if let Some(desc) = self.descriptions.get(id) {
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert("description".to_string(), Value::String(desc.clone()));
+                    }
+                }
+                v
+            })
     }
 
     fn get_module_descriptor(

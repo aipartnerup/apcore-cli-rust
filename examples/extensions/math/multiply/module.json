@@ -1,0 +1,19 @@
+{
+  "name": "math.multiply",
+  "description": "Multiply two integers and return their product",
+  "tags": ["math"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "a": { "type": "integer", "description": "First operand" },
+      "b": { "type": "integer", "description": "Second operand" }
+    },
+    "required": ["a", "b"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "product": { "type": "integer", "description": "The product of a and b" }
+    }
+  }
+}

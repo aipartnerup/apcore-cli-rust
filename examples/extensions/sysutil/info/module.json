@@ -1,0 +1,21 @@
+{
+  "name": "sysutil.info",
+  "description": "Get basic system information (OS, architecture, hostname)",
+  "tags": ["sysutil"],
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "os": { "type": "string", "description": "Operating system name" },
+      "os_version": { "type": "string", "description": "OS release version" },
+      "architecture": { "type": "string", "description": "CPU architecture" },
+      "hostname": { "type": "string", "description": "Machine hostname" },
+      "cwd": { "type": "string", "description": "Current working directory" },
+      "user": { "type": "string", "description": "Current user name" },
+      "rust_version": { "type": "string", "description": "Rust compiler version" }
+    }
+  }
+}
