@@ -1,0 +1,20 @@
+{
+  "directories": {
+    "base": "./",
+    "input": "../apcore-cli-python/planning",
+    "output": "planning/"
+  },
+  "port": {
+    "source_docs": "../apcore",
+    "reference_impl": "../apcore-cli-python",
+    "target_lang": "rust"
+  },
+  "execution": {
+    "default_mode": "ask",
+    "auto_tdd": true,
+    "task_granularity": "medium"
+  },
+  "reference_docs": {
+    "sources": ["../apcore-cli-python/planning"]
+  }
+}
