@@ -247,15 +247,17 @@ impl RegistryProvider for ApCoreRegistryProvider {
 }
 
 // ---------------------------------------------------------------------------
-// MockRegistry — public for integration tests
+// MockRegistry — gated behind cfg(test) or the test-support feature
 // ---------------------------------------------------------------------------
 
 /// Test helper: in-memory registry backed by a Vec of JSON module descriptors.
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub struct MockRegistry {
     modules: Vec<Value>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 impl MockRegistry {
     pub fn new(modules: Vec<Value>) -> Self {
@@ -263,6 +265,7 @@ impl MockRegistry {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl RegistryProvider for MockRegistry {
     fn list(&self) -> Vec<String> {
         self.modules
@@ -280,10 +283,11 @@ impl RegistryProvider for MockRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// mock_module helper — public for integration tests
+// mock_module helper — gated behind cfg(test) or the test-support feature
 // ---------------------------------------------------------------------------
 
 /// Test helper: build a minimal module descriptor JSON value.
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub fn mock_module(id: &str, description: &str, tags: &[&str]) -> Value {
     serde_json::json!({

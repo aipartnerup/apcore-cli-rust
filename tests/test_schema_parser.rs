@@ -5,7 +5,7 @@ mod common;
 
 use std::collections::HashMap;
 
-use apcore_cli::schema_parser::{reconvert_enum_values, schema_to_clap_args, SchemaArgs};
+use apcore_cli::schema_parser::{reconvert_enum_values, schema_to_clap_args};
 use serde_json::{json, Value};
 
 fn find_arg<'a>(args: &'a [clap::Arg], long: &str) -> Option<&'a clap::Arg> {

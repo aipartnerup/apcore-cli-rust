@@ -41,6 +41,9 @@ pub use discovery::{
     DiscoveryError, RegistryProvider,
 };
 // Test utilities — available but hidden from docs.
+// Gated behind cfg(test) for unit tests and the test-support feature for
+// integration tests. Excluded from production builds.
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub use discovery::{mock_module, MockRegistry};
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
