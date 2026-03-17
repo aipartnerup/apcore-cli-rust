@@ -1,0 +1,29 @@
+{
+  "feature": "shell-integration",
+  "created": "2026-03-16T09:35:00Z",
+  "updated": "2026-03-16T09:35:00Z",
+  "status": "pending",
+  "execution_order": ["shell-error-type", "completion-command", "man-page-generator", "cli-wiring"],
+  "progress": {
+    "total_tasks": 4,
+    "completed": 0,
+    "in_progress": 0,
+    "pending": 4
+  },
+  "tasks": [
+    {"id": "shell-error-type", "file": "tasks/shell-error-type.md", "title": "Define ShellError enum and KNOWN_BUILTINS constant", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
+    {"id": "completion-command", "file": "tasks/completion-command.md", "title": "Implement completion_command and cmd_completion using clap_complete", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
+    {"id": "man-page-generator", "file": "tasks/man-page-generator.md", "title": "Implement generate_man_page, build_synopsis, and cmd_man", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
+    {"id": "cli-wiring", "file": "tasks/cli-wiring.md", "title": "Implement register_shell_commands, fix signature, update lib.rs/main.rs, replace stubs", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []}
+  ],
+  "metadata": {
+    "source_doc": "../../../apcore-cli/docs/features/shell-integration.md",
+    "created_by": "code-forge:port",
+    "version": "1.0",
+    "ported_from": {
+      "reference_impl": "apcore-cli-python",
+      "reference_lang": "Python",
+      "target_lang": "rust"
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "feature": "config-resolver",
+  "created": "2026-03-16T09:00:00Z",
+  "updated": "2026-03-16T09:00:00Z",
+  "status": "in_progress",
+  "execution_order": [
+    "models",
+    "resolver",
+    "tests"
+  ],
+  "progress": {
+    "total_tasks": 3,
+    "completed": 1,
+    "in_progress": 1,
+    "pending": 1
+  },
+  "tasks": [
+    {
+      "id": "models",
+      "file": "tasks/models.md",
+      "title": "Audit and finalise defaults, types, and public API surface",
+      "status": "completed",
+      "started_at": null,
+      "completed_at": "2026-03-17T02:58:14.838913Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "resolver",
+      "file": "tasks/resolver.md",
+      "title": "Implement resolve, load_config_file, and flatten_dict",
+      "status": "in_progress",
+      "started_at": null,
+      "completed_at": null,
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "tests",
+      "file": "tasks/tests.md",
+      "title": "Complete integration test assertions in tests/test_config.rs",
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "assignee": null,
+      "commits": []
+    }
+  ],
+  "metadata": {
+    "source_doc": "../../../apcore-cli/docs/features/config-resolver.md",
+    "created_by": "code-forge:port",
+    "version": "1.0",
+    "ported_from": {
+      "reference_impl": "apcore-cli-python",
+      "reference_lang": "Python",
+      "target_lang": "rust"
+    }
+  }
+}

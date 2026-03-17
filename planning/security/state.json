@@ -1,0 +1,30 @@
+{
+  "feature": "security",
+  "created": "2026-03-16T09:30:00Z",
+  "updated": "2026-03-16T09:30:00Z",
+  "status": "pending",
+  "execution_order": ["config-encryptor", "audit", "sandbox", "auth", "integration"],
+  "progress": {
+    "total_tasks": 5,
+    "completed": 0,
+    "in_progress": 0,
+    "pending": 5
+  },
+  "tasks": [
+    {"id": "config-encryptor", "file": "tasks/config-encryptor.md", "title": "Implement ConfigEncryptor — keyring probe, AES-256-GCM encrypt/decrypt, PBKDF2-HMAC-SHA256 key derivation", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
+    {"id": "audit", "file": "tasks/audit.md", "title": "Implement AuditLogger — JSONL append via BufWriter, salted SHA-256 input hash, USER/LOGNAME fallback", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
+    {"id": "sandbox", "file": "tasks/sandbox.md", "title": "Implement Sandbox + _sandbox_runner — tokio subprocess, env_clear + whitelist, 300s timeout", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
+    {"id": "auth", "file": "tasks/auth.md", "title": "Implement AuthProvider — env/config/keyring key resolution, Bearer header injection, 401/403 error mapping", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
+    {"id": "integration", "file": "tasks/integration.md", "title": "Write and pass tests/security/ covering all security acceptance tests", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []}
+  ],
+  "metadata": {
+    "source_doc": "../../../apcore-cli/docs/features/security.md",
+    "created_by": "code-forge:port",
+    "version": "1.0",
+    "ported_from": {
+      "reference_impl": "apcore-cli-python",
+      "reference_lang": "Python",
+      "target_lang": "rust"
+    }
+  }
+}
