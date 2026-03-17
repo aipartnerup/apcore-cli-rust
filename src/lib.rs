@@ -29,7 +29,10 @@ pub const EXIT_SIGINT: i32 = 130;
 
 // Re-export primary public types at crate root.
 pub use approval::{check_approval, ApprovalError, ApprovalTimeoutError};
-pub use cli::{build_module_command, collect_input, set_audit_logger, validate_module_id};
+pub use cli::{
+    build_module_command, collect_input, collect_input_from_reader, set_audit_logger,
+    validate_module_id,
+};
 pub use config::ConfigResolver;
 pub use discovery::register_discovery_commands;
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};

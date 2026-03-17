@@ -4,8 +4,10 @@
 mod common;
 
 use std::collections::HashMap;
+use std::io::Cursor;
 
-use apcore_cli::cli::{build_module_command, collect_input, validate_module_id};
+use apcore_cli::cli::{collect_input_from_reader, validate_module_id, CliError};
+use apcore_cli::{build_module_command, collect_input};
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
@@ -50,57 +52,77 @@ fn test_validate_module_id_max_length_ok() {
 
 #[test]
 fn test_collect_input_no_stdin_drops_null_values() {
-    // None values in cli_kwargs must be dropped.
     let mut kwargs = HashMap::new();
     kwargs.insert("a".to_string(), json!(5));
     kwargs.insert("b".to_string(), Value::Null);
-    let result = collect_input(None, kwargs, false);
-    // TODO: assert result == {"a": 5}
-    assert!(false, "not implemented");
+    let result = collect_input(None, kwargs, false).unwrap();
+    assert_eq!(result.get("a"), Some(&json!(5)));
+    assert!(!result.contains_key("b"), "Null values must be dropped");
 }
 
 #[test]
 fn test_collect_input_stdin_valid_json() {
-    // TODO: inject stdin with valid JSON object, assert merged result.
-    assert!(false, "not implemented");
+    let stdin_bytes = b"{\"x\": 42}";
+    let reader = Cursor::new(stdin_bytes.to_vec());
+    let result = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap();
+    assert_eq!(result.get("x"), Some(&json!(42)));
 }
 
 #[test]
 fn test_collect_input_cli_overrides_stdin() {
-    // CLI flags must override STDIN values for the same key.
-    // TODO: inject stdin with {"a": 5}, cli_kwargs={"a": 99}, assert a==99.
-    assert!(false, "not implemented");
+    let stdin_bytes = b"{\"a\": 5}";
+    let reader = Cursor::new(stdin_bytes.to_vec());
+    let mut kwargs = HashMap::new();
+    kwargs.insert("a".to_string(), json!(99));
+    let result = collect_input_from_reader(Some("-"), kwargs, false, reader).unwrap();
+    assert_eq!(result.get("a"), Some(&json!(99)), "CLI must override STDIN");
 }
 
 #[test]
 fn test_collect_input_oversized_stdin_rejected() {
-    // Input exceeding 10 MiB with large_input=false must return an error.
-    // TODO: mock stdin with >10 MiB payload, assert InputTooLarge error.
-    assert!(false, "not implemented");
+    let big = vec![b' '; 10 * 1024 * 1024 + 1];
+    let reader = Cursor::new(big);
+    let err = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
+    assert!(matches!(err, CliError::InputTooLarge { .. }));
 }
 
 #[test]
 fn test_collect_input_large_input_allowed() {
-    // large_input=true must accept payloads >10 MiB.
-    assert!(false, "not implemented");
+    let mut payload = b"{\"k\": \"".to_vec();
+    payload.extend(vec![b'x'; 11 * 1024 * 1024]);
+    payload.extend(b"\"}");
+    let reader = Cursor::new(payload);
+    let result = collect_input_from_reader(Some("-"), HashMap::new(), true, reader);
+    assert!(result.is_ok(), "large_input=true must accept oversized payload");
 }
 
 #[test]
 fn test_collect_input_invalid_json_returns_error() {
-    // Non-JSON stdin must return CliError::JsonParse.
-    assert!(false, "not implemented");
+    let reader = Cursor::new(b"not json at all".to_vec());
+    let err = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
+    assert!(matches!(err, CliError::JsonParse(_)));
 }
 
 #[test]
 fn test_collect_input_non_object_json_returns_error() {
-    // JSON arrays / scalars must return CliError::NotAnObject.
-    assert!(false, "not implemented");
+    let reader = Cursor::new(b"[1, 2, 3]".to_vec());
+    let err = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
+    assert!(matches!(err, CliError::NotAnObject));
 }
 
 #[test]
 fn test_collect_input_empty_stdin_returns_empty_map() {
-    // Empty stdin must produce an empty HashMap.
-    assert!(false, "not implemented");
+    let reader = Cursor::new(b"".to_vec());
+    let result = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_collect_input_no_stdin_flag_returns_cli_kwargs() {
+    let mut kwargs = HashMap::new();
+    kwargs.insert("foo".to_string(), json!("bar"));
+    let result = collect_input(None, kwargs.clone(), false).unwrap();
+    assert_eq!(result.get("foo"), Some(&json!("bar")));
 }
 
 // ---------------------------------------------------------------------------
