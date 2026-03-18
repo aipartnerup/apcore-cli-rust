@@ -361,7 +361,7 @@ fn format_roff_date(days_since_epoch: u64) -> String {
     let mut remaining = days_since_epoch;
     let mut year = 1970u32;
     loop {
-        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        let leap = year.is_multiple_of(4) && !year.is_multiple_of(100) || year.is_multiple_of(400);
         let days_in_year = if leap { 366 } else { 365 };
         if remaining < days_in_year {
             break;
@@ -369,7 +369,7 @@ fn format_roff_date(days_since_epoch: u64) -> String {
         remaining -= days_in_year;
         year += 1;
     }
-    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let leap = year.is_multiple_of(4) && !year.is_multiple_of(100) || year.is_multiple_of(400);
     let month_days = [
         31u64,
         if leap { 29 } else { 28 },
