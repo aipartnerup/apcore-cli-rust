@@ -626,14 +626,14 @@ fn extract_cli_kwargs(
 /// Execute a script-based module by spawning the executable as a subprocess.
 ///
 /// JSON input is written to stdin; JSON output is read from stdout.
-/// Stderr is inherited so script diagnostics appear in the terminal.
+/// Stderr is captured and included in error messages on failure.
 async fn execute_script(executable: &std::path::Path, input: &Value) -> Result<Value, String> {
     use tokio::io::AsyncWriteExt;
 
     let mut child = tokio::process::Command::new(executable)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn {}: {}", executable.display(), e))?;
 

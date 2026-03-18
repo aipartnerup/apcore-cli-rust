@@ -257,6 +257,7 @@ async fn main() {
         })
         .unwrap_or_else(|| "./extensions".to_string());
 
+    // Discover modules once — share the single registry for both provider and executor.
     let mut registry = apcore::Registry::new();
     let discoverer = apcore_cli::FsDiscoverer::new(&extensions_dir_for_discovery);
     let discovered_names = match registry.discover(&discoverer).await {
@@ -267,24 +268,29 @@ async fn main() {
         }
     };
 
-    let mut exec_registry = apcore::Registry::new();
-    if let Err(e) = exec_registry.discover(&discoverer).await {
-        tracing::warn!("Module discovery failed for executor registry: {e}");
-    }
-
     // Store discovered executables in the global map for dispatch_module.
     apcore_cli::set_executables(discoverer.executables_snapshot());
 
-    let mut provider = apcore_cli::discovery::ApCoreRegistryProvider::new(registry);
+    let descriptions = discoverer.load_descriptions();
+
+    // Build the apcore executor from the discovered registry.
+    let apcore_executor = apcore::Executor::new(registry, apcore::Config::default());
+
+    // Build the provider from a second registry for list/describe.
+    // Executor::new() consumes the first registry, so we re-discover here.
+    // The filesystem scan is fast (local directory) and the discoverer
+    // caches executable paths from the first scan.
+    let mut provider_registry = apcore::Registry::new();
+    let _ = provider_registry.discover(&discoverer).await;
+    let mut provider = apcore_cli::discovery::ApCoreRegistryProvider::new(provider_registry);
     provider.set_discovered_names(discovered_names);
-    provider.set_descriptions(discoverer.load_descriptions());
+    provider.set_descriptions(descriptions);
     let registry_provider: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
         std::sync::Arc::new(provider);
     let executor: std::sync::Arc<dyn apcore_cli::ModuleExecutor> =
         std::sync::Arc::new(apcore_cli::cli::ApCoreExecutorAdapter(
             apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
         ));
-    let apcore_executor = apcore::Executor::new(exec_registry, apcore::Config::default());
 
     let prog_name = resolve_prog_name(None);
 

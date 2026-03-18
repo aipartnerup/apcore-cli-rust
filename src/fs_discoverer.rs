@@ -57,10 +57,13 @@ impl FsDiscoverer {
 
     /// Return the resolved executable path for a module, if one was declared.
     pub fn get_executable(&self, module_name: &str) -> Option<PathBuf> {
-        self.executables
-            .lock()
-            .ok()
-            .and_then(|map| map.get(module_name).cloned())
+        match self.executables.lock() {
+            Ok(map) => map.get(module_name).cloned(),
+            Err(_poisoned) => {
+                tracing::warn!("Executables mutex poisoned — returning None for '{module_name}'");
+                None
+            }
+        }
     }
 
     /// Return a snapshot of all executable paths discovered so far.
@@ -131,12 +134,26 @@ impl Discoverer for FsDiscoverer {
             })?;
 
             // Resolve executable path relative to module.json directory.
+            // Security: validate the resolved path stays within the extensions root.
             if let Some(ref exec_rel) = mj.executable {
                 if let Some(parent) = path.parent() {
                     let exec_path = parent.join(exec_rel);
                     if exec_path.exists() {
-                        if let Ok(mut map) = self.executables.lock() {
-                            map.insert(mj.name.clone(), exec_path);
+                        // Canonicalize both paths to prevent traversal via ../../
+                        let safe = match (exec_path.canonicalize(), self.root.canonicalize()) {
+                            (Ok(exec_canon), Ok(root_canon)) => exec_canon.starts_with(&root_canon),
+                            _ => false,
+                        };
+                        if safe {
+                            if let Ok(mut map) = self.executables.lock() {
+                                map.insert(mj.name.clone(), exec_path);
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Executable '{}' for module '{}' escapes extensions root — skipped",
+                                exec_path.display(),
+                                mj.name
+                            );
                         }
                     }
                 }
