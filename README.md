@@ -354,50 +354,19 @@ The CLI auto-discovers all `module.json` files recursively under `--extensions-d
 
 ## Examples
 
-The `examples/extensions/` directory contains 8 runnable modules:
-
-| Module | Description | Usage |
-|--------|-------------|-------|
-| `math.add` | Add two integers | `apcore-cli math.add --a 5 --b 10` |
-| `math.multiply` | Multiply two integers | `apcore-cli math.multiply --a 6 --b 7` |
-| `text.upper` | Uppercase a string | `apcore-cli text.upper --text hello` |
-| `text.reverse` | Reverse a string | `apcore-cli text.reverse --text abcdef` |
-| `text.wordcount` | Count words/chars/lines | `apcore-cli text.wordcount --text "hello world"` |
-| `sysutil.info` | OS, hostname, Rust version | `apcore-cli sysutil.info` |
-| `sysutil.env` | Read environment variables | `apcore-cli sysutil.env --name HOME` |
-| `sysutil.disk` | Disk usage statistics | `apcore-cli sysutil.disk --path /` |
-
-### Running examples
+The repo includes 8 runnable example modules and a guide for writing your own.
 
 ```bash
-# Set extensions path (one time)
+make build && export PATH=.bin:$PATH
 export APCORE_EXTENSIONS_ROOT=examples/extensions
 
-# Execute modules
-apcore-cli math.add --a 42 --b 58
-apcore-cli text.upper --text "hello apcore"
-apcore-cli sysutil.info
-apcore-cli sysutil.disk --path /
-
-# Discovery
-apcore-cli list --format json
-apcore-cli list --tag math --format json
-apcore-cli describe math.add --format json
-
-# STDIN piping
-echo '{"a": 100, "b": 200}' | apcore-cli math.add --input -
-
-# Shell completion
-apcore-cli completion bash >> ~/.bashrc
-apcore-cli completion zsh >> ~/.zshrc
-apcore-cli completion fish > ~/.config/fish/completions/apcore-cli.fish
-
-# Man pages
-apcore-cli man list | man -l -
-
-# Run all examples at once
-bash examples/run_examples.sh
+apcore-cli math.add --a 5 --b 10          # {"sum": 15}
+apcore-cli list --tag math                # filter by tag
+apcore-cli describe math.add --format json # full schema
+bash examples/run_examples.sh             # run all 8 modules
 ```
+
+See [examples/README.md](examples/README.md) for the full module list, authoring guide, and STDIN piping patterns.
 
 ## License
 
