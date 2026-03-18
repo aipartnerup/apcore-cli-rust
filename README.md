@@ -21,8 +21,7 @@ Terminal adapter for apcore. Execute AI-Perceivable modules from the command lin
 
 ```
 ┌──────────────────┐
-│  django-apcore   │  <- your existing apcore project (unchanged)
-│  flask-apcore    │
+│  your-apcore     │  <- your existing apcore project (unchanged)
 │  ...             │
 └────────┬─────────┘
          │  extensions directory
