@@ -13,7 +13,7 @@
 
 Two small but exact-spec behaviours must be verified end-to-end after the previous tasks have placed their code:
 
-1. **Help text extraction** (`extract_help`): implemented in `type-mapping` but needs dedicated tests covering all four cases — `x-llm-description` present, only `description` present, text > 200 chars, and neither field present.
+1. **Help text extraction** (`extract_help`): implemented in `type-mapping` but needs dedicated tests covering all four cases — `x-llm-description` present, only `description` present, text > configurable limit (default 1000 chars), and neither field present.
 
 2. **Flag collision detection**: `schema_to_clap_args` must return `Err(SchemaParserError::FlagCollision)` when two property names normalise to the same `--flag-name` (e.g., `foo_bar` and `foo-bar` both → `--foo-bar`). The caller in `cli.rs` maps this to exit 48.
 
@@ -66,9 +66,9 @@ fn test_help_falls_back_to_description() {
 }
 
 #[test]
-fn test_help_truncated_at_200_chars() {
-    // Build a description that is exactly 210 chars long.
-    let long_desc = "A".repeat(210);
+fn test_help_truncated_at_1000_chars() {
+    // Build a description that is exactly 1100 chars long.
+    let long_desc = "A".repeat(1100);
     let schema = json!({
         "properties": {
             "q": {"type": "string", "description": long_desc}
@@ -77,13 +77,13 @@ fn test_help_truncated_at_200_chars() {
     let result = schema_to_clap_args(&schema).unwrap();
     let arg = find_arg(&result.args, "q").unwrap();
     let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
-    assert_eq!(help.len(), 200, "truncated help must be exactly 200 chars");
+    assert_eq!(help.len(), 1000, "truncated help must be exactly 1000 chars");
     assert!(help.ends_with("..."), "truncated help must end with '...'");
 }
 
 #[test]
-fn test_help_exactly_200_chars_not_truncated() {
-    let desc = "B".repeat(200);
+fn test_help_within_limit_not_truncated() {
+    let desc = "B".repeat(999);
     let schema = json!({
         "properties": {
             "q": {"type": "string", "description": desc}
@@ -92,7 +92,7 @@ fn test_help_exactly_200_chars_not_truncated() {
     let result = schema_to_clap_args(&schema).unwrap();
     let arg = find_arg(&result.args, "q").unwrap();
     let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
-    assert_eq!(help.len(), 200);
+    assert_eq!(help.len(), 999);
     assert!(!help.ends_with("..."));
 }
 
@@ -160,7 +160,7 @@ Run `cargo test test_help test_flag_collision test_no_collision` — all must fa
 
 The `extract_help` function was already written in `type-mapping`. Run the tests; if any fail, adjust the implementation:
 
-- **Truncation boundary**: `text.len() > 200` triggers truncation; `len() == 200` does not. The slice is `&text[..197]` + `"..."` = 200 chars total.
+- **Truncation boundary**: `text.len() > HELP_TEXT_MAX_LEN (1000)` triggers truncation; `len() == 1000` does not. The slice is `&text[..997]` + `"..."` = 1000 chars total. The limit is configurable via `cli.help_text_max_length`.
 - **x-llm-description empty string**: `filter(|s| !s.is_empty())` ensures an empty `x-llm-description` falls back to `description`. No new code needed; test `test_help_prefers_x_llm_description` already covers the non-empty case.
 
 The collision check was also written in `type-mapping`. If `serde_json::Map` iterates in insertion order (which it does when the `preserve_order` feature is enabled, the default), the first-seen property is stored in `seen_flags` and the second triggers the collision. If the map does not guarantee order, the test asserting both names appear in the error message remains valid regardless of which name is `prop_a` vs `prop_b`.

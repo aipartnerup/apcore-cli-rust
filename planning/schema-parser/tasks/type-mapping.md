@@ -374,7 +374,7 @@ pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserErr
 
 /// Extract help text from a schema property.
 /// Prefers `x-llm-description` over `description`.
-/// Truncates to 200 chars (197 + "...").
+/// Truncates to configurable limit (default 1000 chars).
 pub fn extract_help(prop_schema: &Value) -> Option<String> {
     let text = prop_schema
         .get("x-llm-description")
@@ -387,8 +387,8 @@ pub fn extract_help(prop_schema: &Value) -> Option<String> {
                 .filter(|s| !s.is_empty())
         })?;
 
-    if text.len() > 200 {
-        Some(format!("{}...", &text[..197]))
+    if text.len() > HELP_TEXT_MAX_LEN {
+        Some(format!("{}...", &text[..HELP_TEXT_MAX_LEN - 3]))
     } else {
         Some(text.to_string())
     }

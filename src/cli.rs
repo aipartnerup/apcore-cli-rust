@@ -259,6 +259,20 @@ pub fn build_module_command(
     module_def: &apcore::registry::registry::ModuleDescriptor,
     executor: Arc<dyn ModuleExecutor>,
 ) -> Result<clap::Command, CliError> {
+    build_module_command_with_limit(
+        module_def,
+        executor,
+        crate::schema_parser::HELP_TEXT_MAX_LEN,
+    )
+}
+
+/// Build a clap `Command` for a single module definition with a configurable
+/// help text max length.
+pub fn build_module_command_with_limit(
+    module_def: &apcore::registry::registry::ModuleDescriptor,
+    executor: Arc<dyn ModuleExecutor>,
+    help_text_max_length: usize,
+) -> Result<clap::Command, CliError> {
     let module_id = &module_def.name;
 
     // Guard: reject reserved command names immediately.
@@ -272,8 +286,11 @@ pub fn build_module_command(
             .unwrap_or_else(|_| module_def.input_schema.clone());
 
     // Build clap args from JSON Schema properties.
-    let schema_args = crate::schema_parser::schema_to_clap_args(&resolved_schema)
-        .map_err(|e| CliError::InvalidModuleId(format!("schema parse error: {e}")))?;
+    let schema_args = crate::schema_parser::schema_to_clap_args_with_limit(
+        &resolved_schema,
+        help_text_max_length,
+    )
+    .map_err(|e| CliError::InvalidModuleId(format!("schema parse error: {e}")))?;
 
     // Check for schema property names that collide with built-in flags.
     for arg in &schema_args.args {

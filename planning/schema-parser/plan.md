@@ -20,7 +20,7 @@ Port the Python `schema-parser` feature (FE-02) to Rust. The implementation must
 - Boolean flag pairs: two separate `clap::Arg`s — `--flag` with `ArgAction::SetTrue` and `--no-flag` with `ArgAction::SetFalse`, sharing one `id`.
 - File convention: `prop_name` ends with `_file` or `x-cli-file: true` → `value_parser = clap::value_parser!(PathBuf)`.
 - Enum reconversion: clap parses all values as `String`; `reconvert_enum_values` maps them back to their original JSON types (number, bool, string).
-- Help truncation: text longer than 200 chars is truncated to 197 + `"..."`.
+- Help truncation: text longer than configurable limit (default 1000 chars, via `cli.help_text_max_length`) is truncated to `(limit - 3)` + `"..."`.
 - `$ref` resolution: returns owned `serde_json::Value`; exit 45 on unresolvable, exit 48 on circular / depth > 32.
 - `allOf` merges properties (last wins) and extends required; `anyOf`/`oneOf` unions properties and intersects required.
 
@@ -151,7 +151,7 @@ graph TD
 | `type-mapping` | Implement `map_type` and `SchemaArgs` struct; basic property-to-arg translation | ~2h |
 | `boolean-flag-pairs` | Implement `BoolFlagPair`, paired `--flag`/`--no-flag` arg generation | ~2h |
 | `enum-choices` | Implement `PossibleValuesParser` enum handling with `enum_maps` for reconversion | ~2h |
-| `help-text-and-collision` | Implement `extract_help` (x-llm-description priority, 200-char truncation) and flag collision detection (exit 48) | ~1h |
+| `help-text-and-collision` | Implement `extract_help` (x-llm-description priority, configurable truncation — default 1000 chars) and flag collision detection (exit 48) | ~1h |
 | `reconvert-enum-values` | Implement `reconvert_enum_values` using `enum_maps`; coerce string → Number/Bool/String | ~1h |
 | `update-clap-arg-call-site` | Update `build_module_command` in `cli.rs` to use `SchemaArgs`; update boolean pair reconciliation in `collect_input` | ~2h |
 
@@ -211,7 +211,7 @@ All acceptance criteria from the Python implementation apply, verified via `carg
 | T-SCHEMA-13 | `$ref` depth > 32 | `resolve_refs` returns `Err(RefResolverError::MaxDepthExceeded)` |
 | T-SCHEMA-14 | `allOf` with two sub-schemas | Merged properties from both in resolved output |
 | T-SCHEMA-15 | Help from `x-llm-description` | `Arg` help contains `x-llm-description` text |
-| T-SCHEMA-16 | Help text > 200 chars | Help string ends with `"..."` and is 200 chars total |
+| T-SCHEMA-16 | Help text > 1000 chars (default limit) | Help string ends with `"..."` and is 1000 chars total |
 | T-SCHEMA-17 | Boolean default `true` | `BoolFlagPair.default_val == true` |
 | T-SCHEMA-18 | Enum with integer values `[1,2,3]` | `reconvert_enum_values` produces `Value::Number(1)` |
 | T-SCHEMA-19 | Two properties collide after hyphen conversion | `schema_to_clap_args` returns `Err` with exit-48 semantics |

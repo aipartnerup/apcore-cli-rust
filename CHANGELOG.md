@@ -3,7 +3,24 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.2.1] - 2026-03-19
+
+### Changed
+- Help text truncation limit increased from 200 to 1000 characters (`HELP_TEXT_MAX_LEN` constant)
+- `cli.help_text_max_length` config key added to `ConfigResolver::DEFAULTS` (default: 1000)
+- `logging.level` default changed from `"INFO"` to `"WARNING"` in `ConfigResolver::DEFAULTS` — aligns with Python/TypeScript SDKs and updated spec
+
+### Added
+- `extract_help_with_limit` — configurable-limit variant of `extract_help` (`schema_parser.rs`)
+- `schema_to_clap_args_with_limit` — configurable-limit variant of `schema_to_clap_args` (`schema_parser.rs`)
+- `build_module_command_with_limit` — accepts `help_text_max_length` parameter (`cli.rs`)
+- `HELP_TEXT_MAX_LEN` constant exported from crate root (`lib.rs`)
+- Test: `test_extract_help_truncates_at_1000`
+- Test: `test_extract_help_no_truncation_within_limit`
+- Test: `test_extract_help_custom_max_length`
+- Test: `test_help_truncated_at_1000_chars` (integration)
+- Test: `test_help_within_limit_not_truncated` (integration)
+- 459 tests (up from 458)
 
 ## [0.2.0] - 2026-03-18
 

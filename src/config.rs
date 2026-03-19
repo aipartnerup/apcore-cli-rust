@@ -36,10 +36,11 @@ impl ConfigResolver {
     /// Default configuration values.
     pub const DEFAULTS: &'static [(&'static str, &'static str)] = &[
         ("extensions.root", "./extensions"),
-        ("logging.level", "INFO"),
+        ("logging.level", "WARNING"),
         ("sandbox.enabled", "false"),
         ("cli.stdin_buffer_limit", "10485760"),
         ("cli.auto_approve", "false"),
+        ("cli.help_text_max_length", "1000"),
     ];
 
     /// Create a new `ConfigResolver`.
@@ -258,6 +259,7 @@ mod tests {
             "sandbox.enabled",
             "cli.stdin_buffer_limit",
             "cli.auto_approve",
+            "cli.help_text_max_length",
         ] {
             assert!(
                 resolver.defaults.contains_key(key),
@@ -267,12 +269,12 @@ mod tests {
     }
 
     #[test]
-    fn test_default_logging_level_is_info() {
+    fn test_default_logging_level_is_warning() {
         let resolver = ConfigResolver::new(None, None);
         assert_eq!(
             resolver.defaults.get("logging.level"),
-            Some(&"INFO"),
-            "logging.level default must be INFO, not WARNING"
+            Some(&"WARNING"),
+            "logging.level default must be WARNING"
         );
     }
 

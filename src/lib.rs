@@ -33,8 +33,9 @@ pub const EXIT_SIGINT: i32 = 130;
 // Re-export primary public types at crate root.
 pub use approval::{check_approval, ApprovalError};
 pub use cli::{
-    build_module_command, collect_input, collect_input_from_reader, set_audit_logger,
-    set_executables, validate_module_id, ModuleExecutor,
+    build_module_command, build_module_command_with_limit, collect_input,
+    collect_input_from_reader, set_audit_logger, set_executables, validate_module_id,
+    ModuleExecutor,
 };
 pub use config::ConfigResolver;
 pub use discovery::{
@@ -51,7 +52,8 @@ pub use fs_discoverer::FsDiscoverer;
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
 pub use ref_resolver::resolve_refs;
 pub use schema_parser::{
-    reconvert_enum_values, schema_to_clap_args, BoolFlagPair, SchemaArgs, SchemaParserError,
+    extract_help_with_limit, reconvert_enum_values, schema_to_clap_args,
+    schema_to_clap_args_with_limit, BoolFlagPair, SchemaArgs, SchemaParserError, HELP_TEXT_MAX_LEN,
 };
 pub use security::{AuditLogger, AuthProvider, ConfigEncryptor, Sandbox};
 pub use shell::{

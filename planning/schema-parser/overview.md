@@ -22,7 +22,7 @@ The Schema Parser converts a module's JSON Schema `input_schema` into `clap::Arg
    - Unknown / missing type → plain string arg + warning log
 4. Restricts accepted values for `enum` properties via `PossibleValuesParser`.
 5. Detects flag name collisions (underscore-to-hyphen normalisation) and returns `SchemaParserError::FlagCollision` (caller exits 48).
-6. Extracts help text: `x-llm-description` takes precedence over `description`; text > 200 chars is truncated to 197 + `"..."`.
+6. Extracts help text: `x-llm-description` takes precedence over `description`; text exceeding configurable limit (default 1000 chars, via `cli.help_text_max_length`) is truncated to `(limit - 3)` + `"..."`.
 7. Provides `reconvert_enum_values` to coerce string values parsed by clap back to their original JSON types (Number, Bool) after parsing.
 
 ---

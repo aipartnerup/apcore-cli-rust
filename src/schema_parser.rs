@@ -57,7 +57,7 @@ pub struct SchemaArgs {
 // Constants
 // ---------------------------------------------------------------------------
 
-pub const HELP_TEXT_MAX_LEN: usize = 200;
+pub const HELP_TEXT_MAX_LEN: usize = 1000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,8 +79,13 @@ fn is_file_property(prop_name: &str, prop_schema: &Value) -> bool {
 
 /// Extract help text from a schema property.
 /// Prefers `x-llm-description` over `description`.
-/// Truncates to HELP_TEXT_MAX_LEN chars (197 + "...").
+/// Truncates to `max_len` chars (default: HELP_TEXT_MAX_LEN).
 pub fn extract_help(prop_schema: &Value) -> Option<String> {
+    extract_help_with_limit(prop_schema, HELP_TEXT_MAX_LEN)
+}
+
+/// Extract help text with a configurable max length.
+pub fn extract_help_with_limit(prop_schema: &Value, max_len: usize) -> Option<String> {
     let text = prop_schema
         .get("x-llm-description")
         .and_then(|v| v.as_str())
@@ -92,8 +97,8 @@ pub fn extract_help(prop_schema: &Value) -> Option<String> {
                 .filter(|s| !s.is_empty())
         })?;
 
-    if text.len() > HELP_TEXT_MAX_LEN {
-        Some(format!("{}...", &text[..HELP_TEXT_MAX_LEN - 3]))
+    if max_len > 0 && text.len() > max_len {
+        Some(format!("{}...", &text[..max_len - 3]))
     } else {
         Some(text.to_string())
     }
@@ -157,6 +162,14 @@ pub fn map_type(prop_name: &str, prop_schema: &Value) -> Result<Arg, SchemaParse
 ///
 /// Returns empty SchemaArgs for schemas without properties.
 pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserError> {
+    schema_to_clap_args_with_limit(schema, HELP_TEXT_MAX_LEN)
+}
+
+/// Convert JSON Schema properties to clap Args with a configurable help text max length.
+pub fn schema_to_clap_args_with_limit(
+    schema: &Value,
+    help_max_len: usize,
+) -> Result<SchemaArgs, SchemaParserError> {
     let properties = match schema.get("properties").and_then(|v| v.as_object()) {
         Some(p) => p,
         None => {
@@ -204,7 +217,7 @@ pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserErr
 
         let schema_type = prop_schema.get("type").and_then(|v| v.as_str());
         let is_required = required_list.contains(&prop_name.as_str());
-        let help_text = extract_help(prop_schema);
+        let help_text = extract_help_with_limit(prop_schema, help_max_len);
         let default_val = prop_schema.get("default");
 
         // Boolean → --flag / --no-flag pair. Must be checked before enum.
@@ -544,21 +557,30 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_help_truncates_at_200() {
-        let long_text = "a".repeat(250);
+    fn test_extract_help_truncates_at_1000() {
+        let long_text = "a".repeat(1100);
         let prop = json!({"description": long_text});
         let result = extract_help(&prop).unwrap();
-        assert_eq!(result.len(), 200);
+        assert_eq!(result.len(), 1000);
         assert!(result.ends_with("..."));
     }
 
     #[test]
-    fn test_extract_help_no_truncation_at_200_exactly() {
-        let text = "b".repeat(200);
+    fn test_extract_help_no_truncation_within_limit() {
+        let text = "b".repeat(999);
         let prop = json!({"description": text.clone()});
         let result = extract_help(&prop).unwrap();
         assert_eq!(result, text);
         assert!(!result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_extract_help_custom_max_length() {
+        let long_text = "c".repeat(300);
+        let prop = json!({"description": long_text});
+        let result = extract_help_with_limit(&prop, 200).unwrap();
+        assert_eq!(result.len(), 200);
+        assert!(result.ends_with("..."));
     }
 
     #[test]
@@ -910,8 +932,8 @@ mod tests {
     }
 
     #[test]
-    fn test_help_truncated_at_200_chars() {
-        let long_desc = "A".repeat(210);
+    fn test_help_truncated_at_1000_chars() {
+        let long_desc = "A".repeat(1100);
         let schema = json!({
             "properties": {
                 "q": {"type": "string", "description": long_desc}
@@ -920,13 +942,17 @@ mod tests {
         let result = schema_to_clap_args(&schema).unwrap();
         let arg = find_arg(&result.args, "q").unwrap();
         let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
-        assert_eq!(help.len(), 200, "truncated help must be exactly 200 chars");
+        assert_eq!(
+            help.len(),
+            1000,
+            "truncated help must be exactly 1000 chars"
+        );
         assert!(help.ends_with("..."), "truncated help must end with '...'");
     }
 
     #[test]
-    fn test_help_exactly_200_chars_not_truncated() {
-        let desc = "B".repeat(200);
+    fn test_help_within_limit_not_truncated() {
+        let desc = "B".repeat(999);
         let schema = json!({
             "properties": {
                 "q": {"type": "string", "description": desc}
@@ -935,7 +961,7 @@ mod tests {
         let result = schema_to_clap_args(&schema).unwrap();
         let arg = find_arg(&result.args, "q").unwrap();
         let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
-        assert_eq!(help.len(), 200);
+        assert_eq!(help.len(), 999);
         assert!(!help.ends_with("..."));
     }
 
