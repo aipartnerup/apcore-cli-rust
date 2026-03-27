@@ -27,22 +27,37 @@ static RELOAD_HANDLE: OnceLock<ReloadHandle> = OnceLock::new();
 // extract_extensions_dir
 // ---------------------------------------------------------------------------
 
-/// Pre-parse `--extensions-dir` from raw argv before clap processes arguments.
+/// Pre-parse a `--flag` option from raw argv before clap processes arguments.
 ///
-/// Scans argv linearly — no clap involvement. Mirrors Python's
-/// `_extract_extensions_dir`. Handles both `--extensions-dir VALUE` and
-/// `--extensions-dir=VALUE` forms.
-pub fn extract_extensions_dir(args: &[String]) -> Option<String> {
+/// Scans argv linearly -- no clap involvement. Handles both `--flag VALUE`
+/// and `--flag=VALUE` forms.
+fn extract_argv_option(args: &[String], flag: &str) -> Option<String> {
+    let prefix = format!("{flag}=");
     let mut iter = args.iter().peekable();
     while let Some(arg) = iter.next() {
-        if arg == "--extensions-dir" {
+        if arg == flag {
             return iter.next().cloned();
         }
-        if let Some(val) = arg.strip_prefix("--extensions-dir=") {
+        if let Some(val) = arg.strip_prefix(&prefix) {
             return Some(val.to_string());
         }
     }
     None
+}
+
+/// Pre-parse `--extensions-dir` from raw argv before clap processes arguments.
+pub fn extract_extensions_dir(args: &[String]) -> Option<String> {
+    extract_argv_option(args, "--extensions-dir")
+}
+
+/// Pre-parse `--commands-dir` from raw argv before clap processes arguments.
+pub fn extract_commands_dir(args: &[String]) -> Option<String> {
+    extract_argv_option(args, "--commands-dir")
+}
+
+/// Pre-parse `--binding` from raw argv before clap processes arguments.
+pub fn extract_binding_path(args: &[String]) -> Option<String> {
+    extract_argv_option(args, "--binding")
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +186,20 @@ fn build_cli_command(
                 .help("Path to apcore extensions directory."),
         )
         .arg(
+            clap::Arg::new("commands-dir")
+                .long("commands-dir")
+                .global(true)
+                .value_name("PATH")
+                .help("Path to convention-based commands directory."),
+        )
+        .arg(
+            clap::Arg::new("binding")
+                .long("binding")
+                .global(true)
+                .value_name("PATH")
+                .help("Path to binding.yaml for display overlay."),
+        )
+        .arg(
             clap::Arg::new("log-level")
                 .long("log-level")
                 .global(true)
@@ -186,6 +215,7 @@ fn build_cli_command(
         apcore_cli::ApCoreRegistryProvider::new(apcore::Registry::new()),
     );
     cmd = cmd.subcommand(apcore_cli::cli::exec_command());
+    cmd = cmd.subcommand(apcore_cli::init_cmd::init_command());
     cmd = apcore_cli::discovery::register_discovery_commands(cmd, placeholder);
     cmd = apcore_cli::shell::register_shell_commands(cmd, &name);
 
@@ -272,6 +302,25 @@ async fn main() {
     apcore_cli::set_executables(discoverer.executables_snapshot());
 
     let descriptions = discoverer.load_descriptions();
+
+    // Optional toolkit integration (requires --features toolkit)
+    #[cfg(feature = "toolkit")]
+    {
+        let binding_path = extract_binding_path(&raw_args[1..]);
+        let commands_dir = extract_commands_dir(&raw_args[1..]);
+
+        if commands_dir.is_some() {
+            tracing::warn!("Convention scanning not yet available in Rust toolkit");
+        }
+
+        if let Some(ref bp) = binding_path {
+            let _resolver = apcore_toolkit::DisplayResolver::new();
+            // DisplayResolver works on ScannedModule, not registry modules
+            // directly. This will be fully wired when ConventionScanner
+            // is available in the Rust toolkit.
+            tracing::info!("Display overlay binding loaded from {}", bp);
+        }
+    }
 
     // Build the apcore executor from the discovered registry.
     let apcore_executor = apcore::Executor::new(registry, apcore::Config::default());
@@ -367,6 +416,10 @@ async fn main() {
                 }
             }
         }
+        Some(("init", sub_m)) => {
+            apcore_cli::init_cmd::handle_init(sub_m);
+            std::process::exit(0);
+        }
         Some(("exec", sub_m)) => {
             let module_id = sub_m
                 .get_one::<String>("module_id")
@@ -450,7 +503,7 @@ mod tests {
     /// Mutex serializes tests that manipulate environment variables.
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    // --- extract_extensions_dir ---
+    // --- extract_argv_option / extract_extensions_dir ---
 
     #[test]
     fn test_extract_extensions_dir_flag_space_form() {
@@ -487,6 +540,59 @@ mod tests {
         // --extensions-dir with no following value should return None.
         let args: Vec<String> = vec!["--extensions-dir".to_string()];
         assert_eq!(extract_extensions_dir(&args), None);
+    }
+
+    // --- extract_commands_dir ---
+
+    #[test]
+    fn test_extract_commands_dir_space_form() {
+        let args: Vec<String> = vec!["--commands-dir".to_string(), "/tmp/cmds".to_string()];
+        assert_eq!(extract_commands_dir(&args), Some("/tmp/cmds".to_string()));
+    }
+
+    #[test]
+    fn test_extract_commands_dir_equals_form() {
+        let args: Vec<String> = vec!["--commands-dir=/tmp/cmds".to_string()];
+        assert_eq!(extract_commands_dir(&args), Some("/tmp/cmds".to_string()));
+    }
+
+    #[test]
+    fn test_extract_commands_dir_missing_returns_none() {
+        assert_eq!(extract_commands_dir(&[]), None);
+    }
+
+    // --- extract_binding_path ---
+
+    #[test]
+    fn test_extract_binding_path_space_form() {
+        let args: Vec<String> = vec!["--binding".to_string(), "binding.yaml".to_string()];
+        assert_eq!(
+            extract_binding_path(&args),
+            Some("binding.yaml".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_binding_path_equals_form() {
+        let args: Vec<String> = vec!["--binding=binding.yaml".to_string()];
+        assert_eq!(
+            extract_binding_path(&args),
+            Some("binding.yaml".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_binding_path_missing_returns_none() {
+        assert_eq!(extract_binding_path(&[]), None);
+    }
+
+    // --- extract_argv_option generic ---
+
+    #[test]
+    fn test_extract_argv_option_generic() {
+        let args: Vec<String> = vec!["--foo".to_string(), "bar".to_string()];
+        assert_eq!(extract_argv_option(&args, "--foo"), Some("bar".to_string()));
+        assert_eq!(extract_argv_option(&args, "--baz"), None);
     }
 
     // --- resolve_log_level ---

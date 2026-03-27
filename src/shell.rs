@@ -26,7 +26,7 @@ pub enum ShellError {
 /// among the live clap subcommands, so that built-in commands that have not
 /// yet been wired still produce a man page stub rather than an "unknown
 /// command" error.
-pub const KNOWN_BUILTINS: &[&str] = &["exec", "list", "describe", "completion", "man"];
+pub const KNOWN_BUILTINS: &[&str] = &["exec", "list", "describe", "completion", "init", "man"];
 
 // ---------------------------------------------------------------------------
 // register_shell_commands
@@ -72,13 +72,289 @@ pub fn completion_command() -> clap::Command {
 
 /// Handler: generate a shell completion script and return it as a String.
 ///
+/// For bash, zsh, and fish this produces grouped completion scripts that
+/// support `_APCORE_GRP`-based group filtering (matching the Python
+/// reference implementation).  Other shells fall back to clap_complete.
+///
 /// `shell`     — the target shell (parsed from clap argument)
 /// `prog_name` — the program name to embed in the script
 /// `cmd`       — mutable reference to the root Command (required by clap_complete)
 pub fn cmd_completion(shell: Shell, prog_name: &str, cmd: &mut clap::Command) -> String {
-    let mut buf: Vec<u8> = Vec::new();
-    generate(shell, cmd, prog_name, &mut buf);
-    String::from_utf8_lossy(&buf).into_owned()
+    match shell {
+        Shell::Bash => generate_grouped_bash_completion(prog_name),
+        Shell::Zsh => generate_grouped_zsh_completion(prog_name),
+        Shell::Fish => generate_grouped_fish_completion(prog_name),
+        _ => {
+            let mut buf: Vec<u8> = Vec::new();
+            generate(shell, cmd, prog_name, &mut buf);
+            String::from_utf8_lossy(&buf).into_owned()
+        }
+    }
+}
+
+// -----------------------------------------------------------------
+// Helpers for grouped completion
+// -----------------------------------------------------------------
+
+/// Convert a prog_name like `my-tool` to a valid shell function
+/// name: `_my_tool`.
+fn make_function_name(prog_name: &str) -> String {
+    let sanitised: String = prog_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    format!("_{sanitised}")
+}
+
+/// POSIX-style shell quoting for a program name.
+///
+/// Wraps the value in single quotes and escapes embedded single
+/// quotes using the `'\''` idiom.
+fn shell_quote(s: &str) -> String {
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Build the inline python3 command that lists all module IDs.
+fn module_list_cmd(quoted: &str) -> String {
+    format!(
+        "{quoted} list --format json 2>/dev/null \
+         | python3 -c \"import sys,json;\
+         [print(m['id']) for m in json.load(sys.stdin)]\" \
+         2>/dev/null"
+    )
+}
+
+/// Build the inline python3 command that extracts group names and
+/// top-level (ungrouped) module IDs.
+fn groups_and_top_cmd(quoted: &str) -> String {
+    format!(
+        "{quoted} list --format json 2>/dev/null \
+         | python3 -c \"\
+         import sys,json\n\
+         ids=[m['id'] for m in json.load(sys.stdin)]\n\
+         groups=set()\n\
+         top=[]\n\
+         for i in ids:\n\
+             if '.' in i: groups.add(i.split('.')[0])\n\
+             else: top.append(i)\n\
+         print(' '.join(sorted(groups)+sorted(top)))\n\
+         \" 2>/dev/null"
+    )
+}
+
+/// Build the inline python3 command that lists sub-commands for a
+/// group using the `_APCORE_GRP` environment variable.
+fn group_cmds_cmd(quoted: &str) -> String {
+    format!(
+        "{quoted} list --format json 2>/dev/null \
+         | python3 -c \"\
+         import sys,json,os\n\
+         g=os.environ['_APCORE_GRP']\n\
+         ids=[m['id'] for m in json.load(sys.stdin)]\n\
+         for i in ids:\n\
+             if '.' in i and i.split('.')[0]==g: \
+         print(i.split('.',1)[1])\n\
+         \" 2>/dev/null"
+    )
+}
+
+// -----------------------------------------------------------------
+// Grouped completion generators
+// -----------------------------------------------------------------
+
+/// Generate a bash completion script with grouped module support.
+///
+/// Position 1: complete with builtins + group names + top-level IDs.
+/// Position 2 after `exec`: complete with all module IDs.
+/// Position 2 other: export `_APCORE_GRP="$prev"`, filter by group.
+pub fn generate_grouped_bash_completion(prog_name: &str) -> String {
+    let fn_name = make_function_name(prog_name);
+    let quoted = shell_quote(prog_name);
+    let ml = module_list_cmd(&quoted);
+    let gt = groups_and_top_cmd(&quoted);
+    let gc = group_cmds_cmd(&quoted);
+
+    format!(
+        "{fn_name}() {{\n\
+         \x20   local cur prev\n\
+         \x20   COMPREPLY=()\n\
+         \x20   cur=\"${{COMP_WORDS[COMP_CWORD]}}\"\n\
+         \x20   prev=\"${{COMP_WORDS[COMP_CWORD-1]}}\"\n\
+         \n\
+         \x20   if [[ ${{COMP_CWORD}} -eq 1 ]]; then\n\
+         \x20       local all_ids=$({gt})\n\
+         \x20       local builtins=\"completion describe exec init list man\"\n\
+         \x20       COMPREPLY=( $(compgen -W \
+         \"${{builtins}} ${{all_ids}}\" -- ${{cur}}) )\n\
+         \x20       return 0\n\
+         \x20   fi\n\
+         \n\
+         \x20   if [[ \"${{COMP_WORDS[1]}}\" == \"exec\" \
+         && ${{COMP_CWORD}} -eq 2 ]]; then\n\
+         \x20       local modules=$({ml})\n\
+         \x20       COMPREPLY=( $(compgen -W \
+         \"${{modules}}\" -- ${{cur}}) )\n\
+         \x20       return 0\n\
+         \x20   fi\n\
+         \n\
+         \x20   if [[ ${{COMP_CWORD}} -eq 2 ]]; then\n\
+         \x20       local grp=\"${{COMP_WORDS[1]}}\"\n\
+         \x20       local cmds=$(export \
+         _APCORE_GRP=\"$grp\"; {gc})\n\
+         \x20       COMPREPLY=( $(compgen -W \
+         \"${{cmds}}\" -- ${{cur}}) )\n\
+         \x20       return 0\n\
+         \x20   fi\n\
+         }}\n\
+         complete -F {fn_name} {quoted}\n"
+    )
+}
+
+/// Generate a zsh completion script with grouped module support.
+///
+/// Uses `_arguments`, `compadd`, and `compdef` for native zsh
+/// completion integration.
+pub fn generate_grouped_zsh_completion(prog_name: &str) -> String {
+    let fn_name = make_function_name(prog_name);
+    let quoted = shell_quote(prog_name);
+    let ml = module_list_cmd(&quoted);
+    let gt = groups_and_top_cmd(&quoted);
+    let gc = group_cmds_cmd(&quoted);
+
+    format!(
+        "#compdef {prog_name}\n\
+         \n\
+         {fn_name}() {{\n\
+         \x20   local -a commands groups_and_top\n\
+         \x20   commands=(\n\
+         \x20       'exec:Execute an apcore module'\n\
+         \x20       'list:List available modules'\n\
+         \x20       'describe:Show module metadata and schema'\n\
+         \x20       'completion:Generate shell completion script'\n\
+         \x20       'init:Scaffolding commands'\n\
+         \x20       'man:Generate man page'\n\
+         \x20   )\n\
+         \n\
+         \x20   _arguments -C \\\n\
+         \x20       '1:command:->command' \\\n\
+         \x20       '*::arg:->args'\n\
+         \n\
+         \x20   case \"$state\" in\n\
+         \x20       command)\n\
+         \x20           groups_and_top=($({gt}))\n\
+         \x20           _describe -t commands \
+         '{prog_name} commands' commands\n\
+         \x20           compadd -a groups_and_top\n\
+         \x20           ;;\n\
+         \x20       args)\n\
+         \x20           case \"${{words[1]}}\" in\n\
+         \x20               exec)\n\
+         \x20                   local modules\n\
+         \x20                   modules=($({ml}))\n\
+         \x20                   compadd -a modules\n\
+         \x20                   ;;\n\
+         \x20               *)\n\
+         \x20                   local -a group_cmds\n\
+         \x20                   group_cmds=($(export \
+         _APCORE_GRP=\"${{words[1]}}\"; {gc}))\n\
+         \x20                   compadd -a group_cmds\n\
+         \x20                   ;;\n\
+         \x20           esac\n\
+         \x20           ;;\n\
+         \x20   esac\n\
+         }}\n\
+         \n\
+         compdef {fn_name} {quoted}\n"
+    )
+}
+
+/// Generate a fish completion script with grouped module support.
+///
+/// Defines `__apcore_group_cmds` helper and uses `complete -c` for
+/// native fish integration.
+pub fn generate_grouped_fish_completion(prog_name: &str) -> String {
+    let quoted = shell_quote(prog_name);
+
+    // Fish uses backslash-escaped quotes inside -c strings
+    let ml_fish = module_list_cmd_fish(&quoted);
+    let gt_fish = groups_and_top_cmd_fish(&quoted);
+    let gc_fish_fn = group_cmds_fish_fn(&quoted);
+
+    format!(
+        "# Fish completions for {prog_name}\n\
+         \n\
+         {gc_fish_fn}\
+         \n\
+         complete -c {quoted} -n \"__fish_use_subcommand\" \
+         -a exec -d \"Execute an apcore module\"\n\
+         complete -c {quoted} -n \"__fish_use_subcommand\" \
+         -a list -d \"List available modules\"\n\
+         complete -c {quoted} -n \"__fish_use_subcommand\" \
+         -a describe -d \"Show module metadata and schema\"\n\
+         complete -c {quoted} -n \"__fish_use_subcommand\" \
+         -a completion -d \"Generate shell completion script\"\n\
+         complete -c {quoted} -n \"__fish_use_subcommand\" \
+         -a init -d \"Scaffolding commands\"\n\
+         complete -c {quoted} -n \"__fish_use_subcommand\" \
+         -a man -d \"Generate man page\"\n\
+         complete -c {quoted} -n \"__fish_use_subcommand\" \
+         -a \"({gt_fish})\" \
+         -d \"Module group or command\"\n\
+         \n\
+         complete -c {quoted} \
+         -n \"__fish_seen_subcommand_from exec\" \
+         -a \"({ml_fish})\"\n"
+    )
+}
+
+/// Fish-specific module list command (uses backslash-escaped quotes).
+fn module_list_cmd_fish(quoted: &str) -> String {
+    format!(
+        "{quoted} list --format json 2>/dev/null \
+         | python3 -c \\\"import sys,json;\
+         [print(m['id']) for m in json.load(sys.stdin)]\\\" \
+         2>/dev/null"
+    )
+}
+
+/// Fish-specific groups-and-top command.
+fn groups_and_top_cmd_fish(quoted: &str) -> String {
+    format!(
+        "{quoted} list --format json 2>/dev/null \
+         | python3 -c \\\"\
+         import sys,json\\n\
+         ids=[m['id'] for m in json.load(sys.stdin)]\\n\
+         groups=set()\\n\
+         top=[]\\n\
+         for i in ids:\\n\
+             if '.' in i: groups.add(i.split('.')[0])\\n\
+             else: top.append(i)\\n\
+         print('\\\\n'.join(sorted(groups)+sorted(top)))\\n\
+         \\\" 2>/dev/null"
+    )
+}
+
+/// Fish helper function for group sub-commands.
+fn group_cmds_fish_fn(quoted: &str) -> String {
+    format!(
+        "function __apcore_group_cmds\n\
+         \x20   set -l grp $argv[1]\n\
+         \x20   {quoted} list --format json 2>/dev/null\
+         | python3 -c \\\"\
+         import sys,json,os\\n\
+         g=os.environ['_APCORE_GRP']\\n\
+         ids=[m['id'] for m in json.load(sys.stdin)]\\n\
+         for i in ids:\\n\
+             if '.' in i and i.split('.')[0]==g: \
+         print(i.split('.',1)[1])\\n\
+         \\\" 2>/dev/null\n\
+         end\n"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +581,11 @@ pub const ENV_ENTRIES: &[(&str, &str)] = &[
          Takes priority over \\fBAPCORE_LOGGING_LEVEL\\fR. Default: WARNING.",
     ),
     (
+        "APCORE_LOGGING_LEVEL",
+        "Global apcore logging verbosity. One of: DEBUG, INFO, WARNING, ERROR. \
+         Used as fallback when \\fBAPCORE_CLI_LOGGING_LEVEL\\fR is not set. Default: WARNING.",
+    ),
+    (
         "APCORE_AUTH_API_KEY",
         "API key for authenticating with the apcore registry.",
     ),
@@ -414,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_known_builtins_contains_required_commands() {
-        for cmd in &["exec", "list", "describe", "completion", "man"] {
+        for cmd in &["exec", "list", "describe", "completion", "init", "man"] {
             assert!(
                 KNOWN_BUILTINS.contains(cmd),
                 "KNOWN_BUILTINS must contain '{cmd}'"
@@ -424,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_known_builtins_has_expected_count() {
-        assert_eq!(KNOWN_BUILTINS.len(), 5);
+        assert_eq!(KNOWN_BUILTINS.len(), 6);
     }
 
     // --- Task 2: completion_command / cmd_completion ---

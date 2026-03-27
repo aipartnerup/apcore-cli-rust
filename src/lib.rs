@@ -6,7 +6,9 @@ pub mod approval;
 pub mod cli;
 pub mod config;
 pub mod discovery;
+pub mod display_helpers;
 pub mod fs_discoverer;
+pub mod init_cmd;
 pub mod output;
 pub mod ref_resolver;
 pub mod schema_parser;
@@ -35,13 +37,15 @@ pub use approval::{check_approval, ApprovalError};
 pub use cli::{
     build_module_command, build_module_command_with_limit, collect_input,
     collect_input_from_reader, set_audit_logger, set_executables, validate_module_id,
-    ModuleExecutor,
+    GroupedModuleGroup, ModuleExecutor,
 };
 pub use config::ConfigResolver;
 pub use discovery::{
     cmd_describe, cmd_list, register_discovery_commands, ApCoreRegistryProvider, DiscoveryError,
     RegistryProvider,
 };
+pub use display_helpers::{get_cli_display_fields, get_display};
+pub use init_cmd::{handle_init, init_command};
 // Test utilities — available but hidden from docs.
 // Gated behind cfg(test) for unit tests and the test-support feature for
 // integration tests. Excluded from production builds.

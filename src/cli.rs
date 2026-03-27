@@ -150,7 +150,7 @@ pub fn exec_command() -> clap::Command {
 // ---------------------------------------------------------------------------
 
 /// Built-in command names that are always present regardless of the registry.
-pub const BUILTIN_COMMANDS: &[&str] = &["completion", "describe", "exec", "list", "man"];
+pub const BUILTIN_COMMANDS: &[&str] = &["completion", "describe", "exec", "init", "list", "man"];
 
 /// Lazy command registry: builds module subcommands on-demand from the
 /// apcore Registry, caching them after first construction.
@@ -228,6 +228,199 @@ impl LazyModuleGroup {
     pub fn registry_lookup_count(&self) -> usize {
         self.registry_lookup_count
     }
+}
+
+// ---------------------------------------------------------------------------
+// GroupedModuleGroup -- groups commands by dotted prefix or explicit
+// metadata.display.cli.group
+// ---------------------------------------------------------------------------
+
+/// Grouped command registry: organises modules into sub-command groups
+/// derived from dotted module IDs or explicit display overlay metadata.
+///
+/// This is the Rust equivalent of the Python `GroupedModuleGroup`.
+pub struct GroupedModuleGroup {
+    registry: Arc<dyn crate::discovery::RegistryProvider>,
+    #[allow(dead_code)]
+    executor: Arc<dyn ModuleExecutor>,
+    #[allow(dead_code)]
+    help_text_max_length: usize,
+    group_map: HashMap<String, HashMap<String, (String, Value)>>,
+    top_level_modules: HashMap<String, (String, Value)>,
+    alias_map: HashMap<String, String>,
+    descriptor_cache: HashMap<String, Value>,
+    group_map_built: bool,
+}
+
+impl GroupedModuleGroup {
+    /// Create a new grouped module group.
+    pub fn new(
+        registry: Arc<dyn crate::discovery::RegistryProvider>,
+        executor: Arc<dyn ModuleExecutor>,
+        help_text_max_length: usize,
+    ) -> Self {
+        Self {
+            registry,
+            executor,
+            help_text_max_length,
+            group_map: HashMap::new(),
+            top_level_modules: HashMap::new(),
+            alias_map: HashMap::new(),
+            descriptor_cache: HashMap::new(),
+            group_map_built: false,
+        }
+    }
+
+    /// Resolve the group and command name for a module.
+    ///
+    /// Returns `(Some(group), command)` for grouped modules or
+    /// `(None, command)` for top-level modules.
+    pub fn resolve_group(module_id: &str, descriptor: &Value) -> (Option<String>, String) {
+        let display = crate::display_helpers::get_display(descriptor);
+        let cli = display.get("cli").unwrap_or(&Value::Null);
+
+        // 1. Check explicit group in metadata.display.cli.group
+        if let Some(group_val) = cli.get("group") {
+            if let Some(g) = group_val.as_str() {
+                if g.is_empty() {
+                    // Explicit empty string -> top-level
+                    let alias = cli
+                        .get("alias")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| display.get("alias").and_then(|v| v.as_str()))
+                        .unwrap_or(module_id);
+                    return (None, alias.to_string());
+                }
+                // Explicit non-empty group
+                let alias = cli
+                    .get("alias")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| display.get("alias").and_then(|v| v.as_str()))
+                    .unwrap_or(module_id);
+                return (Some(g.to_string()), alias.to_string());
+            }
+        }
+
+        // 2. Derive alias
+        let alias = cli
+            .get("alias")
+            .and_then(|v| v.as_str())
+            .or_else(|| display.get("alias").and_then(|v| v.as_str()))
+            .unwrap_or(module_id);
+
+        // 3. If alias contains a dot, split on first dot
+        if let Some(dot_pos) = alias.find('.') {
+            let group = &alias[..dot_pos];
+            let cmd = &alias[dot_pos + 1..];
+            return (Some(group.to_string()), cmd.to_string());
+        }
+
+        // 4. No dot -> top-level
+        (None, alias.to_string())
+    }
+
+    /// Build the internal group map from registry modules.
+    pub fn build_group_map(&mut self) {
+        if self.group_map_built {
+            return;
+        }
+        self.group_map_built = true;
+
+        let module_ids = self.registry.list();
+        for mid in &module_ids {
+            let descriptor = match self.registry.get_definition(mid) {
+                Some(d) => d,
+                None => continue,
+            };
+
+            let (group, cmd_name) = Self::resolve_group(mid, &descriptor);
+            self.alias_map.insert(cmd_name.clone(), mid.clone());
+            self.descriptor_cache
+                .insert(mid.clone(), descriptor.clone());
+
+            match group {
+                Some(g) if is_valid_group_name(&g) => {
+                    let entry = self.group_map.entry(g).or_default();
+                    entry.insert(cmd_name, (mid.clone(), descriptor));
+                }
+                Some(g) => {
+                    tracing::warn!(
+                        "Module '{}': group name '{}' is not shell-safe \
+                         -- treating as top-level.",
+                        mid,
+                        g,
+                    );
+                    self.top_level_modules
+                        .insert(cmd_name, (mid.clone(), descriptor));
+                }
+                None => {
+                    self.top_level_modules
+                        .insert(cmd_name, (mid.clone(), descriptor));
+                }
+            }
+        }
+    }
+
+    /// Return sorted list of all command names: builtins + groups +
+    /// top-level modules.
+    pub fn list_commands(&mut self) -> Vec<String> {
+        self.build_group_map();
+        let mut names: Vec<String> = BUILTIN_COMMANDS.iter().map(|s| s.to_string()).collect();
+        for group_name in self.group_map.keys() {
+            names.push(group_name.clone());
+        }
+        for cmd_name in self.top_level_modules.keys() {
+            names.push(cmd_name.clone());
+        }
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    /// Look up a command by name. Returns a clap Command for a
+    /// group (with subcommands) or a top-level module, or None.
+    pub fn get_command(&mut self, name: &str) -> Option<clap::Command> {
+        self.build_group_map();
+
+        if BUILTIN_COMMANDS.contains(&name) {
+            return Some(clap::Command::new(name.to_string()));
+        }
+
+        // Check groups
+        if let Some(members) = self.group_map.get(name) {
+            let mut group_cmd = clap::Command::new(name.to_string());
+            for (cmd_name, (_mid, _desc)) in members {
+                group_cmd = group_cmd.subcommand(clap::Command::new(cmd_name.clone()));
+            }
+            return Some(group_cmd);
+        }
+
+        // Check top-level modules
+        if self.top_level_modules.contains_key(name) {
+            return Some(clap::Command::new(name.to_string()));
+        }
+
+        None
+    }
+
+    /// Return the help text max length.
+    #[cfg(test)]
+    pub fn help_text_max_length(&self) -> usize {
+        self.help_text_max_length
+    }
+}
+
+/// Validate a group name: must match `^[a-z][a-z0-9_-]*$`.
+fn is_valid_group_name(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,7 +1370,7 @@ mod tests {
     fn test_lazy_module_group_list_commands_empty_registry() {
         let group = LazyModuleGroup::new(mock_registry(vec![]), mock_executor());
         let cmds = group.list_commands();
-        for builtin in ["exec", "list", "describe", "completion", "man"] {
+        for builtin in ["exec", "list", "describe", "completion", "init", "man"] {
             assert!(
                 cmds.contains(&builtin.to_string()),
                 "missing builtin: {builtin}"
@@ -1418,5 +1611,165 @@ mod tests {
             std::collections::HashMap::new();
         let result = validate_against_schema(&input, &schema);
         assert!(result.is_ok(), "no required fields: empty input must pass");
+    }
+
+    // -----------------------------------------------------------------
+    // GroupedModuleGroup tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_resolve_group_explicit_group() {
+        let desc = serde_json::json!({
+            "module_id": "my.thing",
+            "metadata": {
+                "display": {
+                    "cli": {
+                        "group": "tools",
+                        "alias": "thing"
+                    }
+                }
+            }
+        });
+        let (group, cmd) = GroupedModuleGroup::resolve_group("my.thing", &desc);
+        assert_eq!(group, Some("tools".to_string()));
+        assert_eq!(cmd, "thing");
+    }
+
+    #[test]
+    fn test_resolve_group_explicit_empty_is_top_level() {
+        let desc = serde_json::json!({
+            "module_id": "my.thing",
+            "metadata": {
+                "display": {
+                    "cli": {
+                        "group": "",
+                        "alias": "thing"
+                    }
+                }
+            }
+        });
+        let (group, cmd) = GroupedModuleGroup::resolve_group("my.thing", &desc);
+        assert!(group.is_none());
+        assert_eq!(cmd, "thing");
+    }
+
+    #[test]
+    fn test_resolve_group_dotted_alias() {
+        let desc = serde_json::json!({
+            "module_id": "math.add",
+            "metadata": {
+                "display": {
+                    "cli": { "alias": "math.add" }
+                }
+            }
+        });
+        let (group, cmd) = GroupedModuleGroup::resolve_group("math.add", &desc);
+        assert_eq!(group, Some("math".to_string()));
+        assert_eq!(cmd, "add");
+    }
+
+    #[test]
+    fn test_resolve_group_no_dot_is_top_level() {
+        let desc = serde_json::json!({"module_id": "greet"});
+        let (group, cmd) = GroupedModuleGroup::resolve_group("greet", &desc);
+        assert!(group.is_none());
+        assert_eq!(cmd, "greet");
+    }
+
+    #[test]
+    fn test_resolve_group_dotted_module_id_default() {
+        // No display metadata -- falls back to module_id with dot
+        let desc = serde_json::json!({"module_id": "text.upper"});
+        let (group, cmd) = GroupedModuleGroup::resolve_group("text.upper", &desc);
+        assert_eq!(group, Some("text".to_string()));
+        assert_eq!(cmd, "upper");
+    }
+
+    #[test]
+    fn test_resolve_group_invalid_group_name_top_level() {
+        // resolve_group returns the raw group name without validation;
+        // build_group_map validates and falls back to top-level for
+        // invalid names.
+        let desc = serde_json::json!({
+            "module_id": "x",
+            "metadata": {
+                "display": {
+                    "cli": { "group": "123Invalid" }
+                }
+            }
+        });
+        let (group, _cmd) = GroupedModuleGroup::resolve_group("x", &desc);
+        assert_eq!(group, Some("123Invalid".to_string()));
+    }
+
+    #[test]
+    fn test_grouped_module_group_list_commands_includes_groups() {
+        let registry = mock_registry(vec!["math.add", "math.mul", "greet"]);
+        let executor = mock_executor();
+        let mut gmg = GroupedModuleGroup::new(registry, executor, 80);
+        let cmds = gmg.list_commands();
+        assert!(
+            cmds.contains(&"math".to_string()),
+            "must contain group 'math'"
+        );
+        // greet has no dot -> top-level
+        assert!(
+            cmds.contains(&"greet".to_string()),
+            "must contain top-level 'greet'"
+        );
+    }
+
+    #[test]
+    fn test_grouped_module_group_get_command_group() {
+        let registry = mock_registry(vec!["math.add", "math.mul"]);
+        let executor = mock_executor();
+        let mut gmg = GroupedModuleGroup::new(registry, executor, 80);
+        let cmd = gmg.get_command("math");
+        assert!(cmd.is_some(), "must find group 'math'");
+        let group_cmd = cmd.unwrap();
+        let subs: Vec<&str> = group_cmd.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"add"));
+        assert!(subs.contains(&"mul"));
+    }
+
+    #[test]
+    fn test_grouped_module_group_get_command_top_level() {
+        let registry = mock_registry(vec!["greet"]);
+        let executor = mock_executor();
+        let mut gmg = GroupedModuleGroup::new(registry, executor, 80);
+        let cmd = gmg.get_command("greet");
+        assert!(cmd.is_some(), "must find top-level 'greet'");
+    }
+
+    #[test]
+    fn test_grouped_module_group_get_command_not_found() {
+        let registry = mock_registry(vec![]);
+        let executor = mock_executor();
+        let mut gmg = GroupedModuleGroup::new(registry, executor, 80);
+        assert!(gmg.get_command("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_grouped_module_group_help_max_length() {
+        let registry = mock_registry(vec![]);
+        let executor = mock_executor();
+        let gmg = GroupedModuleGroup::new(registry, executor, 42);
+        assert_eq!(gmg.help_text_max_length(), 42);
+    }
+
+    #[test]
+    fn test_is_valid_group_name_valid() {
+        assert!(is_valid_group_name("math"));
+        assert!(is_valid_group_name("my-group"));
+        assert!(is_valid_group_name("g1"));
+        assert!(is_valid_group_name("a_b"));
+    }
+
+    #[test]
+    fn test_is_valid_group_name_invalid() {
+        assert!(!is_valid_group_name(""));
+        assert!(!is_valid_group_name("1abc"));
+        assert!(!is_valid_group_name("ABC"));
+        assert!(!is_valid_group_name("a b"));
     }
 }

@@ -4,10 +4,25 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.3.0] - 2026-03-27
+
+### Added
+- **Grouped CLI commands (FE-09)** — `GroupedModuleGroup` organizes modules into nested subcommand groups by namespace prefix, enabling `apcore-cli <group> <command>` invocation.
+- **Display overlay helpers** — `get_display()` and `get_cli_display_fields()` resolve alias, description, and tags from `metadata["display"]`.
+- **Init command (FE-10)** — `apcore-cli init module <id>` scaffolds new modules with `--style` (decorator/convention/binding), `--dir`, and `--description` options.
+- **Grouped shell completions** — Bash, Zsh, and Fish completions now support two-level group/command completion via `_APCORE_GRP`.
+- **Optional apcore-toolkit integration** — `DisplayResolver` and `RegistryWriter` via `toolkit` feature flag with graceful fallback.
+- **Path traversal validation** — `--dir` rejects paths containing `..` components.
+
+### Changed
+- `BUILTIN_COMMANDS` updated to include `init` (6 items, sorted).
+- `APCORE_AUTH_API_KEY` added to man page ENVIRONMENT section.
+- Dependency bump: `apcore >= 0.14`.
+
 ## [0.2.2] - 2026-03-22
 
 ### Changed
-- Rebrand: aiperceivable → aiperceivable
+- Rebrand: aipartnerup → aiperceivable
 
 ## [0.2.1] - 2026-03-19
 

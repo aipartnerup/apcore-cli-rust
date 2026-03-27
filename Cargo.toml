@@ -1,6 +1,6 @@
 [package]
 name = "apcore-cli"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 description = "Command-line interface for apcore modules"
 license = "Apache-2.0"
@@ -45,9 +45,12 @@ base64 = "0.22"
 gethostname = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 tempfile = "3"
+apcore-toolkit = { version = ">=0.4", optional = true }
 
 [features]
+default = []
 test-support = []
+toolkit = ["dep:apcore-toolkit"]
 
 [dev-dependencies]
 tokio-test = "0.4"
