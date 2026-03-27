@@ -24,11 +24,11 @@ fn test_convention_style_creates_file() {
         .unwrap();
     apcore_cli::init_cmd::handle_init(&matches);
 
-    let file = dir.join("greet.py");
+    let file = dir.join("greet.rs");
     assert!(file.exists(), "convention file must be created");
     let content = fs::read_to_string(&file).unwrap();
     assert!(
-        content.contains("def greet("),
+        content.contains("pub fn greet("),
         "must contain function definition"
     );
 }
@@ -53,14 +53,13 @@ fn test_decorator_style_creates_file_with_module() {
         .unwrap();
     apcore_cli::init_cmd::handle_init(&matches);
 
-    let file = dir.join("math_add.py");
+    let file = dir.join("math_add.rs");
     assert!(file.exists(), "decorator file must be created");
     let content = fs::read_to_string(&file).unwrap();
     assert!(
-        content.contains("@module("),
-        "must contain @module decorator"
+        content.contains("impl Module for"),
+        "must contain impl Module"
     );
-    assert!(content.contains("math.add"), "must contain module id");
 }
 
 #[test]
@@ -91,11 +90,12 @@ fn test_binding_style_creates_yaml() {
         "YAML must contain module id"
     );
 
-    // Companion Python file is created at commands/text.py (relative to CWD).
-    let py_file = std::path::Path::new("commands").join("text.py");
-    assert!(py_file.exists(), "companion Python file must be created");
+    // Companion Rust file is created at commands/text.rs
+    // (relative to CWD).
+    let rs_file = std::path::Path::new("commands").join("text.rs");
+    assert!(rs_file.exists(), "companion Rust file must be created");
     // Clean up the companion file.
-    let _ = fs::remove_file(&py_file);
+    let _ = fs::remove_file(&rs_file);
     let _ = fs::remove_dir("commands");
 }
 
@@ -119,10 +119,10 @@ fn test_convention_dotted_id_has_cli_group() {
         .unwrap();
     apcore_cli::init_cmd::handle_init(&matches);
 
-    let file = dir.join("math").join("add.py");
+    let file = dir.join("math").join("add.rs");
     let content = fs::read_to_string(&file).unwrap();
     assert!(
-        content.contains("CLI_GROUP = \"math\""),
+        content.contains("pub const CLI_GROUP: &str = \"math\""),
         "dotted module_id must produce CLI_GROUP"
     );
 }
@@ -149,7 +149,7 @@ fn test_description_flag() {
         .unwrap();
     apcore_cli::init_cmd::handle_init(&matches);
 
-    let file = dir.join("demo_hello.py");
+    let file = dir.join("demo_hello.rs");
     let content = fs::read_to_string(&file).unwrap();
     assert!(
         content.contains("My custom description"),

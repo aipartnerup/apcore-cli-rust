@@ -80,7 +80,25 @@ fn validate_dir(dir: &str) {
     }
 }
 
-/// Create a decorator-style module (Python file with @module).
+/// Convert a snake_case name to PascalCase and append "Module".
+fn to_struct_name(func_name: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for ch in func_name.chars() {
+        if ch == '_' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            result.push(ch.to_ascii_uppercase());
+            capitalize_next = false;
+        } else {
+            result.push(ch);
+        }
+    }
+    result.push_str("Module");
+    result
+}
+
+/// Create a decorator-style module (Rust file with Module trait).
 fn create_decorator_module(module_id: &str, func_name: &str, description: &str, dir: &str) {
     let dir_path = Path::new(dir);
     fs::create_dir_all(dir_path).unwrap_or_else(|e| {
@@ -92,21 +110,53 @@ fn create_decorator_module(module_id: &str, func_name: &str, description: &str, 
     });
 
     let safe_name = module_id.replace('.', "_");
-    let filename = format!("{safe_name}.py");
+    let filename = format!("{safe_name}.rs");
     let filepath = dir_path.join(&filename);
 
+    let struct_name = to_struct_name(func_name);
+
     let content = format!(
-        r#""""Module: {module_id}"""
-
-from apcore import module
-
-
-@module(id="{module_id}", description="{description}")
-def {func_name}() -> dict:
-    """{description}"""
-    # TODO: implement
-    return {{"status": "ok"}}
-"#,
+        "use apcore::module::Module;\n\
+         use apcore::context::Context;\n\
+         use apcore::errors::ModuleError;\n\
+         use async_trait::async_trait;\n\
+         use serde_json::{{json, Value}};\n\
+         \n\
+         /// {description}\n\
+         pub struct {struct_name};\n\
+         \n\
+         #[async_trait]\n\
+         impl Module for {struct_name} {{\n\
+         {i}fn input_schema(&self) -> Value {{\n\
+         {i}{i}json!({{\n\
+         {i}{i}{i}\"type\": \"object\",\n\
+         {i}{i}{i}\"properties\": {{}}\n\
+         {i}{i}}})\n\
+         {i}}}\n\
+         \n\
+         {i}fn output_schema(&self) -> Value {{\n\
+         {i}{i}json!({{\n\
+         {i}{i}{i}\"type\": \"object\",\n\
+         {i}{i}{i}\"properties\": {{\n\
+         {i}{i}{i}{i}\"status\": {{ \"type\": \"string\" }}\n\
+         {i}{i}{i}}}\n\
+         {i}{i}}})\n\
+         {i}}}\n\
+         \n\
+         {i}fn description(&self) -> &str {{\n\
+         {i}{i}\"{description}\"\n\
+         {i}}}\n\
+         \n\
+         {i}async fn execute(\n\
+         {i}{i}&self,\n\
+         {i}{i}_input: Value,\n\
+         {i}{i}_ctx: &Context<Value>,\n\
+         {i}) -> Result<Value, ModuleError> {{\n\
+         {i}{i}// TODO: implement\n\
+         {i}{i}Ok(json!({{ \"status\": \"ok\" }}))\n\
+         {i}}}\n\
+         }}\n",
+        i = "    ",
     );
 
     fs::write(&filepath, content).unwrap_or_else(|e| {
@@ -117,8 +167,8 @@ def {func_name}() -> dict:
     println!("Created {}", filepath.display());
 }
 
-/// Create a convention-style module (plain Python function with
-/// CLI_GROUP).
+/// Create a convention-style module (Rust function with
+/// CLI_GROUP constant).
 fn create_convention_module(
     module_id: &str,
     prefix: &str,
@@ -127,17 +177,19 @@ fn create_convention_module(
     dir: &str,
 ) {
     // Build the file path: prefix parts become subdirectories.
-    // e.g. module_id "ops.deploy" with dir "commands" -> "commands/ops/deploy.py"
-    // e.g. module_id "standalone" with dir "commands" -> "commands/standalone.py"
+    // e.g. module_id "ops.deploy" with dir "commands"
+    //   -> "commands/ops/deploy.rs"
+    // e.g. module_id "standalone" with dir "commands"
+    //   -> "commands/standalone.rs"
     let filepath = if module_id.contains('.') {
         let parts: Vec<&str> = module_id.split('.').collect();
         let mut p = Path::new(dir).to_path_buf();
         for part in &parts[..parts.len() - 1] {
             p = p.join(part);
         }
-        p.join(format!("{}.py", parts[parts.len() - 1]))
+        p.join(format!("{}.rs", parts[parts.len() - 1]))
     } else {
-        Path::new(dir).join(format!("{func_name}.py"))
+        Path::new(dir).join(format!("{func_name}.rs"))
     };
 
     if let Some(parent) = filepath.parent() {
@@ -148,22 +200,25 @@ fn create_convention_module(
     }
 
     // Only emit CLI_GROUP when module_id contains a dot.
-    // Use the first prefix segment (before any dots in the prefix).
     let first_segment = prefix.split('.').next().unwrap_or(prefix);
-    let group_line = if module_id.contains('.') {
-        format!("CLI_GROUP = \"{first_segment}\"\n\n")
+    let cli_group_line = if module_id.contains('.') {
+        format!("pub const CLI_GROUP: &str = \"{first_segment}\";\n\n")
     } else {
         String::new()
     };
 
     let content = format!(
-        r#""""{description}"""
-
-{group_line}def {func_name}() -> dict:
-    """{description}"""
-    # TODO: implement
-    return {{"status": "ok"}}
-"#,
+        "//! {description}\n\
+         \n\
+         {cli_group_line}\
+         use serde_json::{{json, Value}};\n\
+         \n\
+         /// {description}\n\
+         pub fn {func_name}() -> Value {{\n\
+         {i}// TODO: implement\n\
+         {i}json!({{ \"status\": \"ok\" }})\n\
+         }}\n",
+        i = "    ",
     );
 
     fs::write(&filepath, content).unwrap_or_else(|e| {
@@ -174,7 +229,7 @@ fn create_convention_module(
     println!("Created {}", filepath.display());
 }
 
-/// Create a binding-style module (YAML binding + companion Python
+/// Create a binding-style module (YAML binding + companion Rust
 /// file).
 fn create_binding_module(
     module_id: &str,
@@ -192,22 +247,21 @@ fn create_binding_module(
         std::process::exit(2);
     });
 
-    // Write YAML binding file: {module_id_with_dots_as_underscores}.binding.yaml
+    // Write YAML binding file.
     let safe_name = module_id.replace('.', "_");
     let yaml_filename = format!("{safe_name}.binding.yaml");
     let yaml_filepath = dir_path.join(&yaml_filename);
 
-    // Build the target string: "commands.{prefix}:{func_name}" (keep dots in prefix)
     let target = format!("commands.{prefix}:{func_name}");
     let prefix_underscored = prefix.replace('.', "_");
 
     let yaml_content = format!(
-        r#"bindings:
-  - module_id: "{module_id}"
-    target: "{target}"
-    description: "{description}"
-    auto_schema: true
-"#,
+        "bindings:\n\
+         {i}- module_id: \"{module_id}\"\n\
+         {i}{i}target: \"{target}\"\n\
+         {i}{i}description: \"{description}\"\n\
+         {i}{i}auto_schema: true\n",
+        i = "  ",
     );
 
     fs::write(&yaml_filepath, yaml_content).unwrap_or_else(|e| {
@@ -217,33 +271,37 @@ fn create_binding_module(
 
     println!("Created {}", yaml_filepath.display());
 
-    // Write companion Python file to commands/{prefix_with_dots_as_underscores}.py
-    let py_filename = format!("{prefix_underscored}.py");
-    let py_filepath = Path::new("commands").join(&py_filename);
+    // Write companion Rust file to
+    // commands/{prefix_with_dots_as_underscores}.rs
+    let rs_filename = format!("{prefix_underscored}.rs");
+    let rs_filepath = Path::new("commands").join(&rs_filename);
 
     // Only create if it does not already exist.
-    if !py_filepath.exists() {
-        if let Some(parent) = py_filepath.parent() {
+    if !rs_filepath.exists() {
+        if let Some(parent) = rs_filepath.parent() {
             fs::create_dir_all(parent).unwrap_or_else(|e| {
                 eprintln!("Error: cannot create directory '{}': {e}", parent.display());
                 std::process::exit(2);
             });
         }
 
-        let py_content = format!(
-            r#"def {func_name}() -> dict:
-    """{description}"""
-    # TODO: implement
-    return {{"status": "ok"}}
-"#,
+        let rs_content = format!(
+            "use serde_json::{{json, Value}};\n\
+             \n\
+             /// {description}\n\
+             pub fn {func_name}() -> Value {{\n\
+             {i}// TODO: implement\n\
+             {i}json!({{ \"status\": \"ok\" }})\n\
+             }}\n",
+            i = "    ",
         );
 
-        fs::write(&py_filepath, py_content).unwrap_or_else(|e| {
-            eprintln!("Error: cannot write '{}': {e}", py_filepath.display());
+        fs::write(&rs_filepath, rs_content).unwrap_or_else(|e| {
+            eprintln!("Error: cannot write '{}': {e}", rs_filepath.display());
             std::process::exit(2);
         });
 
-        println!("Created {}", py_filepath.display());
+        println!("Created {}", rs_filepath.display());
     }
 }
 
