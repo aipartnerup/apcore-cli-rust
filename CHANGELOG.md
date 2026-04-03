@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.5.1] - 2026-04-03
+
+### Added
+- **Pre-populated registry support** — `CliConfig` struct with optional `registry` (pre-populated `RegistryProvider`) and `executor` (pre-built `ModuleExecutor`) fields. When provided, downstream binaries can skip filesystem discovery entirely. This enables frameworks that register modules at runtime (e.g. apflow's bridge) to generate CLI commands from their existing registry.
+- `CliConfig` exported from crate root with `Default` impl.
+
+---
+
 ## [0.4.0] - 2026-03-29
 
 ### Added

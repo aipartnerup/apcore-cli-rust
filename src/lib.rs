@@ -39,6 +39,42 @@ pub const EXIT_CONFIG_BIND_ERROR: i32 = 65;
 pub const EXIT_ERROR_FORMATTER_DUPLICATE: i32 = 70;
 pub const EXIT_SIGINT: i32 = 130;
 
+// ---------------------------------------------------------------------------
+// CliConfig — high-level configuration for embedded CLI usage.
+// ---------------------------------------------------------------------------
+
+/// Configuration for creating a CLI that uses a pre-populated registry
+/// instead of filesystem discovery.
+///
+/// Frameworks that register modules at runtime (e.g. apflow's bridge) can
+/// build their own [`RegistryProvider`] + [`ModuleExecutor`] and pass them
+/// here to skip the default filesystem scan.
+///
+/// # Example
+/// ```ignore
+/// use std::sync::Arc;
+///
+/// let config = apcore_cli::CliConfig {
+///     prog_name: Some("myapp".to_string()),
+///     registry: Some(Arc::new(my_provider)),
+///     executor: Some(Arc::new(my_executor)),
+///     ..Default::default()
+/// };
+/// // Use config.registry / config.executor at dispatch time instead of
+/// // performing filesystem discovery with FsDiscoverer.
+/// ```
+#[derive(Default)]
+pub struct CliConfig {
+    /// Override the program name shown in help text.
+    pub prog_name: Option<String>,
+    /// Override extensions directory (only used when `registry` is None).
+    pub extensions_dir: Option<String>,
+    /// Pre-populated registry provider. When set, skips filesystem discovery.
+    pub registry: Option<std::sync::Arc<dyn discovery::RegistryProvider>>,
+    /// Pre-built module executor. When set, skips executor construction.
+    pub executor: Option<std::sync::Arc<dyn cli::ModuleExecutor>>,
+}
+
 // Re-export primary public types at crate root.
 pub use approval::{check_approval, ApprovalError};
 pub use cli::{
@@ -71,3 +107,30 @@ pub use shell::{
     build_program_man_page, build_synopsis, cmd_completion, cmd_man, completion_command,
     generate_man_page, has_man_flag, register_shell_commands, ShellError, KNOWN_BUILTINS,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_config_default_has_all_none() {
+        let config = CliConfig::default();
+        assert!(config.prog_name.is_none());
+        assert!(config.extensions_dir.is_none());
+        assert!(config.registry.is_none());
+        assert!(config.executor.is_none());
+    }
+
+    #[test]
+    fn cli_config_accepts_pre_populated_registry() {
+        let mock_registry = discovery::MockRegistry::new(vec![]);
+        let config = CliConfig {
+            prog_name: Some("test-app".to_string()),
+            registry: Some(std::sync::Arc::new(mock_registry)),
+            ..Default::default()
+        };
+        assert_eq!(config.prog_name.as_deref(), Some("test-app"));
+        assert!(config.registry.is_some());
+        assert!(config.executor.is_none());
+    }
+}

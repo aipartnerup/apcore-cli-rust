@@ -99,6 +99,24 @@ apcore-cli math.add --a 42 --b 58
 
 All modules are auto-discovered. CLI flags are auto-generated from each module's JSON Schema.
 
+### Programmatic approach (Rust library)
+
+Use `apcore-cli` as a library crate to embed CLI into your own binary:
+
+```rust
+use apcore_cli::CliConfig;
+use std::sync::Arc;
+
+// Pre-populated registry from your framework (skips filesystem discovery)
+let config = CliConfig {
+    prog_name: Some("myapp".to_string()),
+    registry: Some(Arc::new(my_provider)),
+    executor: Some(Arc::new(my_executor)),
+    ..Default::default()
+};
+// Use config.registry / config.executor at dispatch time
+```
+
 ## Integration with Existing Projects
 
 ### Typical apcore project structure
@@ -281,7 +299,7 @@ apcore Registry + Executor (your modules, unchanged)
 
 ## API Overview
 
-**Structs:** `LazyModuleGroup`, `ConfigResolver`, `AuthProvider`, `ConfigEncryptor`, `AuditLogger`, `Sandbox`
+**Structs:** `CliConfig`, `LazyModuleGroup`, `ConfigResolver`, `AuthProvider`, `ConfigEncryptor`, `AuditLogger`, `Sandbox`
 
 **Functions:** `build_module_command`, `build_module_command_with_limit`, `validate_module_id`, `collect_input`, `schema_to_clap_args`, `schema_to_clap_args_with_limit`, `reconvert_enum_values`, `resolve_refs`, `check_approval`, `resolve_format`, `format_module_list`, `format_module_detail`, `format_exec_result`, `add_dispatch_flags`, `set_audit_logger`, `get_audit_logger`, `set_verbose_help`, `set_docs_url`, `get_docs_url`, `build_program_man_page`, `has_man_flag`, `exit_code_for_error`, `map_type`, `extract_help`, `extract_help_with_limit`, `truncate`
 
