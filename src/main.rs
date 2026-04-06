@@ -300,7 +300,7 @@ fn build_cli_command(
         );
 
     // Register built-in subcommands from discovery and shell modules.
-    // The registry parameter is unused during clap command registration —
+    // The registry parameter is unused during clap command registration --
     // it is only needed at dispatch time for cmd_list / cmd_describe.
     let placeholder: std::sync::Arc<dyn apcore_cli::RegistryProvider> = std::sync::Arc::new(
         apcore_cli::ApCoreRegistryProvider::new(apcore::Registry::new()),
@@ -309,6 +309,15 @@ fn build_cli_command(
     cmd = cmd.subcommand(apcore_cli::init_cmd::init_command());
     cmd = apcore_cli::discovery::register_discovery_commands(cmd, placeholder);
     cmd = apcore_cli::shell::register_shell_commands(cmd, &name);
+
+    // FE-11: System management commands (F2).
+    cmd = apcore_cli::system_cmd::register_system_commands(cmd);
+
+    // FE-11: Pipeline strategy command (F8).
+    cmd = apcore_cli::strategy::register_pipeline_command(cmd);
+
+    // FE-11: Standalone validate command (F1).
+    cmd = apcore_cli::validate::register_validate_command(cmd);
 
     cmd
 }
@@ -464,7 +473,26 @@ async fn main() {
                 .map(|vals| vals.map(|s| s.as_str()).collect())
                 .unwrap_or_default();
             let format = sub_m.get_one::<String>("format").map(|s| s.as_str());
-            match apcore_cli::discovery::cmd_list(registry_provider.as_ref(), &tags, format) {
+            let search = sub_m.get_one::<String>("search").map(|s| s.as_str());
+            let status = sub_m.get_one::<String>("status").map(|s| s.as_str());
+            let annotations: Vec<&str> = sub_m
+                .get_many::<String>("annotation")
+                .map(|vals| vals.map(|s| s.as_str()).collect())
+                .unwrap_or_default();
+            let sort = sub_m.get_one::<String>("sort").map(|s| s.as_str());
+            let reverse = sub_m.get_flag("reverse");
+            let deprecated = sub_m.get_flag("deprecated");
+            let opts = apcore_cli::discovery::ListOptions {
+                tags: &tags,
+                explicit_format: format,
+                search,
+                status,
+                annotations: &annotations,
+                sort,
+                reverse,
+                deprecated,
+            };
+            match apcore_cli::discovery::cmd_list_enhanced(registry_provider.as_ref(), &opts) {
                 Ok(output) => {
                     println!("{output}");
                     std::process::exit(0);
@@ -532,6 +560,34 @@ async fn main() {
         Some(("init", sub_m)) => {
             apcore_cli::init_cmd::handle_init(sub_m);
             std::process::exit(0);
+        }
+        // FE-11 F2: System management commands.
+        Some(("health", sub_m)) => {
+            apcore_cli::system_cmd::dispatch_health(sub_m, &apcore_executor);
+        }
+        Some(("usage", sub_m)) => {
+            apcore_cli::system_cmd::dispatch_usage(sub_m, &apcore_executor);
+        }
+        Some(("enable", sub_m)) => {
+            apcore_cli::system_cmd::dispatch_enable(sub_m, &apcore_executor);
+        }
+        Some(("disable", sub_m)) => {
+            apcore_cli::system_cmd::dispatch_disable(sub_m, &apcore_executor);
+        }
+        Some(("reload", sub_m)) => {
+            apcore_cli::system_cmd::dispatch_reload(sub_m, &apcore_executor);
+        }
+        Some(("config", sub_m)) => {
+            apcore_cli::system_cmd::dispatch_config(sub_m, &apcore_executor);
+        }
+        // FE-11 F8: Pipeline strategy command.
+        Some(("describe-pipeline", sub_m)) => {
+            apcore_cli::strategy::dispatch_describe_pipeline(sub_m);
+        }
+        // FE-11 F1: Standalone validate command.
+        Some(("validate", sub_m)) => {
+            apcore_cli::validate::dispatch_validate(sub_m, &registry_provider, &apcore_executor)
+                .await;
         }
         Some(("exec", sub_m)) => {
             let module_id = sub_m

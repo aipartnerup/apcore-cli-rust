@@ -26,7 +26,22 @@ pub enum ShellError {
 /// among the live clap subcommands, so that built-in commands that have not
 /// yet been wired still produce a man page stub rather than an "unknown
 /// command" error.
-pub const KNOWN_BUILTINS: &[&str] = &["exec", "list", "describe", "completion", "init", "man"];
+pub const KNOWN_BUILTINS: &[&str] = &[
+    "completion",
+    "config",
+    "describe",
+    "describe-pipeline",
+    "disable",
+    "enable",
+    "exec",
+    "health",
+    "init",
+    "list",
+    "man",
+    "reload",
+    "usage",
+    "validate",
+];
 
 // ---------------------------------------------------------------------------
 // register_shell_commands
@@ -872,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_known_builtins_has_expected_count() {
-        assert_eq!(KNOWN_BUILTINS.len(), 6);
+        assert_eq!(KNOWN_BUILTINS.len(), 14);
     }
 
     // --- Task 2: completion_command / cmd_completion ---

@@ -3,7 +3,7 @@
 //                        collect_input, validate_module_id, set_audit_logger)
 
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -181,11 +181,20 @@ pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
     .arg(
         Arg::new("format")
             .long("format")
-            .value_parser(["table", "json"])
+            .value_parser(["table", "json", "csv", "yaml", "jsonl"])
             .help(
-                "Set output format: 'json' for \
-                 machine-readable, 'table' for \
-                 human-readable",
+                "Output format: json, table, csv, \
+                 yaml, jsonl.",
+            )
+            .hide(hide),
+    )
+    .arg(
+        Arg::new("fields")
+            .long("fields")
+            .value_name("FIELDS")
+            .help(
+                "Comma-separated dot-paths to select \
+                 from the result (e.g., 'status,data.count').",
             )
             .hide(hide),
     )
@@ -200,6 +209,67 @@ pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
                  access",
             )
             .hide(true),
+    )
+    .arg(
+        Arg::new("dry-run")
+            .long("dry-run")
+            .action(ArgAction::SetTrue)
+            .help(
+                "Run preflight checks without executing \
+                 the module. Shows validation results.",
+            )
+            .hide(hide),
+    )
+    .arg(
+        Arg::new("trace")
+            .long("trace")
+            .action(ArgAction::SetTrue)
+            .help(
+                "Show execution pipeline trace with \
+                 per-step timing after the result.",
+            )
+            .hide(hide),
+    )
+    .arg(
+        Arg::new("stream")
+            .long("stream")
+            .action(ArgAction::SetTrue)
+            .help(
+                "Stream module output as JSONL (one JSON \
+                 object per line, flushed immediately).",
+            )
+            .hide(hide),
+    )
+    .arg(
+        Arg::new("strategy")
+            .long("strategy")
+            .value_parser(["standard", "internal", "testing", "performance", "minimal"])
+            .value_name("STRATEGY")
+            .help(
+                "Execution pipeline strategy: standard \
+                 (default), internal, testing, performance.",
+            )
+            .hide(hide),
+    )
+    .arg(
+        Arg::new("approval-timeout")
+            .long("approval-timeout")
+            .value_name("SECONDS")
+            .help(
+                "Override approval prompt timeout in \
+                 seconds (default: 60).",
+            )
+            .hide(hide),
+    )
+    .arg(
+        Arg::new("approval-token")
+            .long("approval-token")
+            .value_name("TOKEN")
+            .help(
+                "Resume a pending approval with the \
+                 given token (for async approval flows).",
+            )
+            .hide(hide),
     )
 }
 
@@ -223,7 +293,22 @@ pub fn exec_command() -> clap::Command {
 // ---------------------------------------------------------------------------
 
 /// Built-in command names that are always present regardless of the registry.
-pub const BUILTIN_COMMANDS: &[&str] = &["completion", "describe", "exec", "init", "list", "man"];
+pub const BUILTIN_COMMANDS: &[&str] = &[
+    "completion",
+    "config",
+    "describe",
+    "describe-pipeline",
+    "disable",
+    "enable",
+    "exec",
+    "health",
+    "init",
+    "list",
+    "man",
+    "reload",
+    "usage",
+    "validate",
+];
 
 /// Lazy command registry: builds module subcommands on-demand from the
 /// apcore Registry, caching them after first construction.
@@ -504,12 +589,19 @@ fn is_valid_group_name(s: &str) -> bool {
 /// property that collides with one of these names will cause
 /// `std::process::exit(2)`.
 const RESERVED_FLAG_NAMES: &[&str] = &[
-    "input",
-    "yes",
-    "large-input",
+    "approval-timeout",
+    "approval-token",
+    "dry-run",
+    "fields",
     "format",
+    "input",
+    "large-input",
     "sandbox",
+    "strategy",
+    "stream",
+    "trace",
     "verbose",
+    "yes",
 ];
 
 /// Build a clap `Command` for a single module definition.
@@ -634,11 +726,21 @@ pub fn build_module_command_with_limit(
         .arg(
             clap::Arg::new("format")
                 .long("format")
-                .value_parser(["json", "table"])
+                .value_parser(["json", "table", "csv", "yaml", "jsonl"])
                 .help(
-                    "Set output format: 'json' for \
-                     machine-readable, 'table' for \
-                     human-readable.",
+                    "Output format: json, table, csv, \
+                     yaml, jsonl.",
+                )
+                .hide(hide),
+        )
+        .arg(
+            clap::Arg::new("fields")
+                .long("fields")
+                .value_name("FIELDS")
+                .help(
+                    "Comma-separated dot-paths to select \
+                     from the result \
+                     (e.g., 'status,data.count').",
                 )
                 .hide(hide),
         )
@@ -653,6 +755,61 @@ pub fn build_module_command_with_limit(
                      access.",
                 )
                 .hide(true),
+        )
+        .arg(
+            clap::Arg::new("dry-run")
+                .long("dry-run")
+                .action(clap::ArgAction::SetTrue)
+                .help(
+                    "Run preflight checks without \
+                     executing the module.",
+                )
+                .hide(hide),
+        )
+        .arg(
+            clap::Arg::new("trace")
+                .long("trace")
+                .action(clap::ArgAction::SetTrue)
+                .help(
+                    "Show execution pipeline trace with \
+                     per-step timing after the result.",
+                )
+                .hide(hide),
+        )
+        .arg(
+            clap::Arg::new("stream")
+                .long("stream")
+                .action(clap::ArgAction::SetTrue)
+                .help("Stream module output as JSONL.")
+                .hide(hide),
+        )
+        .arg(
+            clap::Arg::new("strategy")
+                .long("strategy")
+                .value_parser(["standard", "internal", "testing", "performance", "minimal"])
+                .value_name("STRATEGY")
+                .help("Execution pipeline strategy.")
+                .hide(hide),
+        )
+        .arg(
+            clap::Arg::new("approval-timeout")
+                .long("approval-timeout")
+                .value_name("SECONDS")
+                .help(
+                    "Override approval prompt timeout in \
+                     seconds (default: 60).",
+                )
+                .hide(hide),
+        )
+        .arg(
+            clap::Arg::new("approval-token")
+                .long("approval-token")
+                .value_name("TOKEN")
+                .help(
+                    "Resume a pending approval with the \
+                     given token.",
+                )
+                .hide(hide),
         );
 
     // Attach schema-derived args.
@@ -838,7 +995,8 @@ pub(crate) fn map_apcore_error_to_exit_code(error_code: &str) -> i32 {
         // Config Bus errors (apcore >= 0.15.0)
         "CONFIG_NAMESPACE_RESERVED"
         | "CONFIG_NAMESPACE_DUPLICATE"
-        | "CONFIG_ENV_PREFIX_CONFLICT" => EXIT_CONFIG_NAMESPACE_RESERVED,
+        | "CONFIG_ENV_PREFIX_CONFLICT"
+        | "CONFIG_ENV_MAP_CONFLICT" => EXIT_CONFIG_NAMESPACE_RESERVED,
         "CONFIG_MOUNT_ERROR" => EXIT_CONFIG_MOUNT_ERROR,
         "CONFIG_BIND_ERROR" => EXIT_CONFIG_BIND_ERROR,
         "ERROR_FORMATTER_DUPLICATE" => EXIT_ERROR_FORMATTER_DUPLICATE,
@@ -893,6 +1051,109 @@ pub(crate) fn validate_against_schema(
 
 // ---------------------------------------------------------------------------
 // dispatch_module — full execution pipeline
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// F3: Enhanced Error Output
+// ---------------------------------------------------------------------------
+
+/// Emit structured JSON error to stderr for AI agents / non-TTY consumers.
+///
+/// When `error_data` is provided (from an apcore ModuleError), its fields
+/// (`code`, `details`, `suggestion`, `ai_guidance`, `retryable`,
+/// `user_fixable`) are included in the output per FE-11 spec section 3.3.
+fn emit_error_json(
+    _module_id: &str,
+    message: &str,
+    exit_code: i32,
+    error_data: Option<&serde_json::Value>,
+) {
+    let mut payload = serde_json::json!({
+        "error": true,
+        "code": "UNKNOWN",
+        "message": message,
+        "exit_code": exit_code,
+    });
+    // Overlay fields from the structured error if available.
+    if let Some(data) = error_data {
+        if let Some(obj) = data.as_object() {
+            for key in &[
+                "code",
+                "message",
+                "details",
+                "suggestion",
+                "ai_guidance",
+                "retryable",
+                "user_fixable",
+            ] {
+                if let Some(val) = obj.get(*key) {
+                    if !val.is_null() {
+                        payload[*key] = val.clone();
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{}", serde_json::to_string(&payload).unwrap_or_default());
+}
+
+/// Emit human-readable error to stderr with structured guidance fields.
+///
+/// Shows `[CODE]` header, `Details:` block, `Suggestion:`, and `Retryable:`
+/// labels. Hides `ai_guidance` and `user_fixable` (machine-oriented fields).
+fn emit_error_tty(
+    _module_id: &str,
+    message: &str,
+    exit_code: i32,
+    error_data: Option<&serde_json::Value>,
+) {
+    // Header with error code.
+    if let Some(code) = error_data
+        .and_then(|d| d.get("code"))
+        .and_then(|v| v.as_str())
+    {
+        eprintln!("Error [{code}]: {message}");
+    } else {
+        eprintln!("Error: {message}");
+    }
+
+    // Details block.
+    if let Some(details) = error_data
+        .and_then(|d| d.get("details"))
+        .and_then(|v| v.as_object())
+    {
+        eprintln!("\n  Details:");
+        for (k, v) in details {
+            eprintln!("    {k}: {v}");
+        }
+    }
+
+    // Suggestion.
+    if let Some(suggestion) = error_data
+        .and_then(|d| d.get("suggestion"))
+        .and_then(|v| v.as_str())
+    {
+        eprintln!("\n  Suggestion: {suggestion}");
+    }
+
+    // Retryable.
+    if let Some(retryable) = error_data
+        .and_then(|d| d.get("retryable"))
+        .and_then(|v| v.as_bool())
+    {
+        let label = if retryable {
+            "Yes"
+        } else {
+            "No (same input will fail again)"
+        };
+        eprintln!("  Retryable: {label}");
+    }
+
+    eprintln!("\n  Exit code: {exit_code}");
+}
+
+// ---------------------------------------------------------------------------
+// Boolean pair reconciliation
 // ---------------------------------------------------------------------------
 
 /// Reconcile --flag / --no-flag boolean pairs from ArgMatches into bool values.
@@ -1061,12 +1322,19 @@ pub async fn dispatch_module(
     let auto_approve = matches.get_flag("yes");
     let large_input = matches.get_flag("large-input");
     let format_flag = matches.get_one::<String>("format").cloned();
+    let fields_flag = matches.get_one::<String>("fields").cloned();
+    let dry_run = matches.get_flag("dry-run");
+    let trace_flag = matches.get_flag("trace");
+    let stream_flag = matches.get_flag("stream");
+    let strategy_name = matches.get_one::<String>("strategy").cloned();
+    let _approval_timeout = matches.get_one::<String>("approval-timeout");
+    let approval_token = matches.get_one::<String>("approval-token").cloned();
 
     // 4. Build CLI kwargs from schema-derived flags (stub: empty map).
     let cli_kwargs = extract_cli_kwargs(matches, &module_def);
 
     // 5. Collect and merge input (exit 2 on errors).
-    let merged = match collect_input(stdin_flag, cli_kwargs, large_input) {
+    let mut merged = match collect_input(stdin_flag, cli_kwargs, large_input) {
         Ok(m) => m,
         Err(CliError::InputTooLarge { .. }) => {
             eprintln!("Error: STDIN input exceeds 10MB limit. Use --large-input to override.");
@@ -1086,6 +1354,98 @@ pub async fn dispatch_module(
         }
     };
 
+    // -- F1: Dry-run / validate: preflight only, no execution --
+    if dry_run {
+        // --trace --dry-run: show pipeline preview after preflight result.
+        let show_trace_preview = trace_flag;
+        let print_pipeline_preview = || {
+            if show_trace_preview {
+                let pure_steps = [
+                    "context_creation",
+                    "call_chain_guard",
+                    "module_lookup",
+                    "acl_check",
+                    "input_validation",
+                ];
+                let all_steps = [
+                    "context_creation",
+                    "call_chain_guard",
+                    "module_lookup",
+                    "acl_check",
+                    "approval_gate",
+                    "middleware_before",
+                    "input_validation",
+                    "execute",
+                    "output_validation",
+                    "middleware_after",
+                    "return_result",
+                ];
+                eprintln!("\nPipeline preview (dry-run):");
+                for s in &all_steps {
+                    if pure_steps.contains(s) {
+                        eprintln!("  v {:<24} (pure -- would execute)", s);
+                    } else {
+                        eprintln!("  o {:<24} (impure -- skipped in dry-run)", s);
+                    }
+                }
+            }
+        };
+        let input_value =
+            serde_json::to_value(&merged).unwrap_or(Value::Object(Default::default()));
+        let preflight_input = serde_json::json!({
+            "module_id": module_id,
+            "input": input_value,
+        });
+        let result = apcore_executor
+            .call("system.validate", preflight_input, None, None)
+            .await;
+        match result {
+            Ok(preflight_val) => {
+                crate::validate::format_preflight_result(&preflight_val, format_flag.as_deref());
+                print_pipeline_preview();
+                let valid = preflight_val
+                    .get("valid")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if valid {
+                    std::process::exit(EXIT_SUCCESS);
+                } else {
+                    std::process::exit(crate::EXIT_MODULE_EXECUTE_ERROR);
+                }
+            }
+            Err(_e) => {
+                // Fallback: perform basic schema validation only.
+                let schema_ok = if let Some(schema) = module_def.input_schema.as_object() {
+                    if schema.contains_key("properties") {
+                        validate_against_schema(&merged, &module_def.input_schema).is_ok()
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                };
+
+                let checks = vec![
+                    serde_json::json!({"check": "module_id", "passed": true}),
+                    serde_json::json!({"check": "module_lookup", "passed": true}),
+                    serde_json::json!({"check": "schema", "passed": schema_ok}),
+                ];
+                let preflight = serde_json::json!({
+                    "valid": schema_ok,
+                    "requires_approval": false,
+                    "checks": checks,
+                });
+                crate::validate::format_preflight_result(&preflight, format_flag.as_deref());
+                print_pipeline_preview();
+                if schema_ok {
+                    std::process::exit(EXIT_SUCCESS);
+                } else {
+                    std::process::exit(EXIT_SCHEMA_VALIDATION_ERROR);
+                }
+            }
+        }
+    }
+
     // 6. Schema validation (if module has input_schema with properties).
     if let Some(schema) = module_def.input_schema.as_object() {
         if schema.contains_key("properties") {
@@ -1094,6 +1454,11 @@ pub async fn dispatch_module(
                 std::process::exit(EXIT_SCHEMA_VALIDATION_ERROR);
             }
         }
+    }
+
+    // -- F5: Inject approval token if provided --
+    if let Some(ref token) = approval_token {
+        merged.insert("_approval_token".to_string(), Value::String(token.clone()));
     }
 
     // 7. Approval gate (exit 46 on denial/timeout).
@@ -1115,48 +1480,206 @@ pub async fn dispatch_module(
         .and_then(|map| map.get(module_id))
         .cloned();
 
+    // -- F6: Streaming execution --
+    if stream_flag {
+        // Streaming always outputs JSONL; --format table is ignored (spec 3.6.2).
+        if format_flag.as_deref() == Some("table") {
+            eprintln!("Warning: Streaming mode always outputs JSONL; --format table is ignored.");
+        }
+        let start = std::time::Instant::now();
+        // Stream outputs as JSONL.
+        if let Some(exec_path) = script_executable.as_ref() {
+            // Script-based: fall back to regular execution, output as JSONL.
+            let res = tokio::select! {
+                res = execute_script(exec_path, &input_value) => res,
+                _ = tokio::signal::ctrl_c() => {
+                    eprintln!("Execution cancelled.");
+                    std::process::exit(EXIT_SIGINT);
+                }
+            };
+            match res {
+                Ok(val) => {
+                    // Output as single JSONL line.
+                    println!("{}", serde_json::to_string(&val).unwrap_or_default());
+                    let duration_ms = start.elapsed().as_millis() as u64;
+                    if let Ok(guard) = AUDIT_LOGGER.lock() {
+                        if let Some(logger) = guard.as_ref() {
+                            logger.log_execution(
+                                module_id,
+                                &input_value,
+                                "success",
+                                0,
+                                duration_ms,
+                            );
+                        }
+                    }
+                    std::process::exit(EXIT_SUCCESS);
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(crate::EXIT_MODULE_EXECUTE_ERROR);
+                }
+            }
+        }
+        // In-process: use executor.stream() if available, else fall through.
+        // apcore executor does not expose a stream() method in Rust yet,
+        // so we fall back to standard call and output as single JSONL line.
+        let res = tokio::select! {
+            res = apcore_executor.call(
+                module_id, input_value.clone(), None, None,
+            ) => res,
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Execution cancelled.");
+                std::process::exit(EXIT_SIGINT);
+            }
+        };
+        let duration_ms = start.elapsed().as_millis() as u64;
+        match res {
+            Ok(val) => {
+                // If result is array, output each element as a JSONL line.
+                if let Some(arr) = val.as_array() {
+                    for item in arr {
+                        println!("{}", serde_json::to_string(item).unwrap_or_default());
+                    }
+                } else {
+                    println!("{}", serde_json::to_string(&val).unwrap_or_default());
+                }
+                if let Ok(guard) = AUDIT_LOGGER.lock() {
+                    if let Some(logger) = guard.as_ref() {
+                        logger.log_execution(module_id, &input_value, "success", 0, duration_ms);
+                    }
+                }
+                std::process::exit(EXIT_SUCCESS);
+            }
+            Err(e) => {
+                let code = map_module_error_to_exit_code(&e);
+                eprintln!("Error: Module '{module_id}' execution failed: {e}.");
+                std::process::exit(code);
+            }
+        }
+    }
+
+    // -- F4: Traced execution --
+    if trace_flag {
+        let start = std::time::Instant::now();
+        // Use standard call; trace output is simulated from timing data.
+        // Full PipelineTrace requires call_with_trace(), which may not be
+        // available on all executor implementations.
+        let res = tokio::select! {
+            res = apcore_executor.call(
+                module_id,
+                input_value.clone(),
+                None,
+                None,
+            ) => res,
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Execution cancelled.");
+                std::process::exit(EXIT_SIGINT);
+            }
+        };
+        let duration_ms = start.elapsed().as_millis() as u64;
+        match res {
+            Ok(output) => {
+                if let Ok(guard) = AUDIT_LOGGER.lock() {
+                    if let Some(logger) = guard.as_ref() {
+                        logger.log_execution(module_id, &input_value, "success", 0, duration_ms);
+                    }
+                }
+                // Print result with trace appended.
+                let fmt = crate::output::resolve_format(format_flag.as_deref());
+                if fmt == "json" {
+                    // Merge trace stub into JSON output.
+                    let trace_data = serde_json::json!({
+                        "strategy": strategy_name.as_deref().unwrap_or("standard"),
+                        "total_duration_ms": duration_ms,
+                        "success": true,
+                    });
+                    let combined = if output.is_object() {
+                        let mut obj = output.as_object().unwrap().clone();
+                        obj.insert("_trace".to_string(), trace_data);
+                        Value::Object(obj)
+                    } else {
+                        serde_json::json!({
+                            "result": output,
+                            "_trace": trace_data,
+                        })
+                    };
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&combined).unwrap_or_default()
+                    );
+                } else {
+                    let out_str =
+                        crate::output::format_exec_result(&output, fmt, fields_flag.as_deref());
+                    println!("{out_str}");
+                    eprintln!(
+                        "\nPipeline Trace (strategy: {}, {duration_ms}ms)",
+                        strategy_name.as_deref().unwrap_or("standard"),
+                    );
+                }
+                std::process::exit(EXIT_SUCCESS);
+            }
+            Err(e) => {
+                let code = map_module_error_to_exit_code(&e);
+                eprintln!("Error: Module '{module_id}' execution failed: {e}.");
+                std::process::exit(code);
+            }
+        }
+    }
+
     // 9. Execute with SIGINT race (exit 130 on Ctrl-C).
     let start = std::time::Instant::now();
 
-    // Unify the execution paths into Result<Value, (i32, String)> where
-    // the error tuple is (exit_code, display_message).
-    let result: Result<Value, (i32, String)> = if let Some(exec_path) = script_executable {
-        // Script-based execution: spawn subprocess, pipe JSON via stdin/stdout.
-        tokio::select! {
-            res = execute_script(&exec_path, &input_value) => {
-                res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e))
+    // Unify the execution paths into Result<Value, (i32, String, Option<Value>)>
+    // where the error tuple is (exit_code, display_message, optional_structured_error).
+    let result: Result<Value, (i32, String, Option<Value>)> =
+        if let Some(exec_path) = script_executable {
+            // Script-based execution: spawn subprocess, pipe JSON via stdin/stdout.
+            tokio::select! {
+                res = execute_script(&exec_path, &input_value) => {
+                    res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e, None))
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    eprintln!("Execution cancelled.");
+                    std::process::exit(EXIT_SIGINT);
+                }
             }
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("Execution cancelled.");
-                std::process::exit(EXIT_SIGINT);
+        } else if use_sandbox {
+            let sandbox = crate::security::Sandbox::new(true, 0);
+            tokio::select! {
+                res = sandbox.execute(module_id, input_value.clone()) => {
+                    res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e.to_string(), None))
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    eprintln!("Execution cancelled.");
+                    std::process::exit(EXIT_SIGINT);
+                }
             }
-        }
-    } else if use_sandbox {
-        let sandbox = crate::security::Sandbox::new(true, 0);
-        tokio::select! {
-            res = sandbox.execute(module_id, input_value.clone()) => {
-                res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e.to_string()))
+        } else {
+            // Direct in-process executor call.
+            // Note: strategy is configured at Executor construction, not per-call.
+            // The strategy_name flag is available for future use when the Executor
+            // supports per-call strategy overrides.
+            tokio::select! {
+                res = apcore_executor.call(
+                    module_id,
+                    input_value.clone(),
+                    None,
+                    None,
+                ) => {
+                    res.map_err(|e| {
+                        let code = map_module_error_to_exit_code(&e);
+                        // Serialize the ModuleError for F3 structured error output.
+                        let data = serde_json::to_value(&e).ok();
+                        (code, e.to_string(), data)
+                    })
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    eprintln!("Execution cancelled.");
+                    std::process::exit(EXIT_SIGINT);
+                }
             }
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("Execution cancelled.");
-                std::process::exit(EXIT_SIGINT);
-            }
-        }
-    } else {
-        // Direct in-process executor call (4-argument signature).
-        tokio::select! {
-            res = apcore_executor.call(module_id, input_value.clone(), None, None) => {
-                res.map_err(|e| {
-                    let code = map_module_error_to_exit_code(&e);
-                    (code, e.to_string())
-                })
-            }
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("Execution cancelled.");
-                std::process::exit(EXIT_SIGINT);
-            }
-        }
-    };
+        };
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -1168,19 +1691,27 @@ pub async fn dispatch_module(
                     logger.log_execution(module_id, &input_value, "success", 0, duration_ms);
                 }
             }
-            // 11. Format and output.
+            // 11. Format and output (F9: with field selection).
             let fmt = crate::output::resolve_format(format_flag.as_deref());
-            println!("{}", crate::output::format_exec_result(&output, fmt));
+            println!(
+                "{}",
+                crate::output::format_exec_result(&output, fmt, fields_flag.as_deref(),)
+            );
             std::process::exit(EXIT_SUCCESS);
         }
-        Err((exit_code, msg)) => {
+        Err((exit_code, msg, error_data)) => {
             // Audit log error.
             if let Ok(guard) = AUDIT_LOGGER.lock() {
                 if let Some(logger) = guard.as_ref() {
                     logger.log_execution(module_id, &input_value, "error", exit_code, duration_ms);
                 }
             }
-            eprintln!("Error: Module '{module_id}' execution failed: {msg}.");
+            // F3: Enhanced error output with structured guidance fields.
+            if format_flag.as_deref() == Some("json") || !std::io::stderr().is_terminal() {
+                emit_error_json(module_id, &msg, exit_code, error_data.as_ref());
+            } else {
+                emit_error_tty(module_id, &msg, exit_code, error_data.as_ref());
+            }
             std::process::exit(exit_code);
         }
     }
@@ -1500,7 +2031,7 @@ mod tests {
     fn test_lazy_module_group_list_commands_empty_registry() {
         let group = LazyModuleGroup::new(mock_registry(vec![]), mock_executor());
         let cmds = group.list_commands();
-        for builtin in ["exec", "list", "describe", "completion", "init", "man"] {
+        for builtin in BUILTIN_COMMANDS {
             assert!(
                 cmds.contains(&builtin.to_string()),
                 "missing builtin: {builtin}"

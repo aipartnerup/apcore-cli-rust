@@ -234,22 +234,22 @@ fn test_describe_command_invalid_id_exits_2() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_list_format_flag_rejects_yaml_at_parse_time() {
-    // Clap must reject "--format yaml" before the handler runs.
+fn test_list_format_flag_rejects_xml_at_parse_time() {
+    // Clap must reject "--format xml" before the handler runs.
     let root = build_root(make_registry());
-    let result = root.try_get_matches_from(["apcore-cli", "list", "--format", "yaml"]);
-    assert!(result.is_err(), "--format yaml must be rejected by clap");
+    let result = root.try_get_matches_from(["apcore-cli", "list", "--format", "xml"]);
+    assert!(result.is_err(), "--format xml must be rejected by clap");
     let err = result.unwrap_err();
     // Clap error kind for invalid value is InvalidValue.
     assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
 }
 
 #[test]
-fn test_describe_format_flag_rejects_yaml_at_parse_time() {
+fn test_describe_format_flag_rejects_xml_at_parse_time() {
     let root = build_root(make_registry());
     let result =
-        root.try_get_matches_from(["apcore-cli", "describe", "math.add", "--format", "yaml"]);
-    assert!(result.is_err(), "--format yaml must be rejected by clap");
+        root.try_get_matches_from(["apcore-cli", "describe", "math.add", "--format", "xml"]);
+    assert!(result.is_err(), "--format xml must be rejected by clap");
     let err = result.unwrap_err();
     assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
 }

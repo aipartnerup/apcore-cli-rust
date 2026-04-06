@@ -1,6 +1,6 @@
 // apcore-cli — Command-line interface for apcore modules
 // Library root: re-exports all public API items.
-// Protocol spec: FE-01 through FE-10, SEC-01 through SEC-04
+// Protocol spec: FE-01 through FE-11, SEC-01 through SEC-04
 
 pub mod approval;
 pub mod cli;
@@ -14,6 +14,9 @@ pub mod ref_resolver;
 pub mod schema_parser;
 pub mod security;
 pub mod shell;
+pub mod strategy;
+pub mod system_cmd;
+pub mod validate;
 
 // Internal sandbox runner — not part of the public API surface, but must be
 // pub so the binary entry point (main.rs) can invoke run_sandbox_subprocess().
@@ -34,6 +37,7 @@ pub const EXIT_ACL_DENIED: i32 = 77;
 pub const EXIT_CONFIG_NAMESPACE_RESERVED: i32 = 78;
 pub const EXIT_CONFIG_NAMESPACE_DUPLICATE: i32 = 78;
 pub const EXIT_CONFIG_ENV_PREFIX_CONFLICT: i32 = 78;
+pub const EXIT_CONFIG_ENV_MAP_CONFLICT: i32 = 78;
 pub const EXIT_CONFIG_MOUNT_ERROR: i32 = 66;
 pub const EXIT_CONFIG_BIND_ERROR: i32 = 65;
 pub const EXIT_ERROR_FORMATTER_DUPLICATE: i32 = 70;
@@ -63,7 +67,6 @@ pub const EXIT_SIGINT: i32 = 130;
 /// // Use config.registry / config.executor at dispatch time instead of
 /// // performing filesystem discovery with FsDiscoverer.
 /// ```
-#[derive(Default)]
 pub struct CliConfig {
     /// Override the program name shown in help text.
     pub prog_name: Option<String>,
@@ -73,6 +76,25 @@ pub struct CliConfig {
     pub registry: Option<std::sync::Arc<dyn discovery::RegistryProvider>>,
     /// Pre-built module executor. When set, skips executor construction.
     pub executor: Option<std::sync::Arc<dyn cli::ModuleExecutor>>,
+    /// Extra custom commands to add to the CLI root. Each entry is a
+    /// `clap::Command` that will be registered as a subcommand.
+    pub extra_commands: Vec<clap::Command>,
+    /// Group depth for multi-level module grouping (default: 1).
+    /// Higher values allow deeper dotted-name grouping.
+    pub group_depth: usize,
+}
+
+impl Default for CliConfig {
+    fn default() -> Self {
+        Self {
+            prog_name: None,
+            extensions_dir: None,
+            registry: None,
+            executor: None,
+            extra_commands: Vec::new(),
+            group_depth: 1,
+        }
+    }
 }
 
 // Re-export primary public types at crate root.
@@ -84,8 +106,8 @@ pub use cli::{
 };
 pub use config::ConfigResolver;
 pub use discovery::{
-    cmd_describe, cmd_list, register_discovery_commands, ApCoreRegistryProvider, DiscoveryError,
-    RegistryProvider,
+    cmd_describe, cmd_list, cmd_list_enhanced, register_discovery_commands, ApCoreRegistryProvider,
+    DiscoveryError, ListOptions, RegistryProvider,
 };
 pub use display_helpers::{get_cli_display_fields, get_display};
 pub use init_cmd::{handle_init, init_command};
@@ -107,6 +129,13 @@ pub use shell::{
     build_program_man_page, build_synopsis, cmd_completion, cmd_man, completion_command,
     generate_man_page, has_man_flag, register_shell_commands, ShellError, KNOWN_BUILTINS,
 };
+pub use strategy::{
+    describe_pipeline_command, dispatch_describe_pipeline, register_pipeline_command,
+};
+pub use system_cmd::{register_system_commands, SYSTEM_COMMANDS};
+pub use validate::{
+    dispatch_validate, format_preflight_result, register_validate_command, validate_command,
+};
 
 #[cfg(test)]
 mod tests {
@@ -119,6 +148,8 @@ mod tests {
         assert!(config.extensions_dir.is_none());
         assert!(config.registry.is_none());
         assert!(config.executor.is_none());
+        assert!(config.extra_commands.is_empty());
+        assert_eq!(config.group_depth, 1);
     }
 
     #[test]

@@ -143,7 +143,7 @@ fn test_format_module_detail_table_description() {
 #[test]
 fn test_format_exec_result_json() {
     let result = json!({"sum": 42});
-    let output = format_exec_result(&result, "json");
+    let output = format_exec_result(&result, "json", None);
     let parsed: serde_json::Value = serde_json::from_str(&output).expect("must be valid JSON");
     assert_eq!(parsed["sum"], 42);
 }
@@ -151,28 +151,28 @@ fn test_format_exec_result_json() {
 #[test]
 fn test_format_exec_result_table() {
     let result = json!({"sum": 42});
-    let output = format_exec_result(&result, "table");
+    let output = format_exec_result(&result, "table", None);
     assert!(output.contains("sum"), "table must contain key 'sum'");
     assert!(output.contains("42"), "table must contain value '42'");
 }
 
 #[test]
 fn test_format_exec_result_null() {
-    let output = format_exec_result(&serde_json::Value::Null, "json");
+    let output = format_exec_result(&serde_json::Value::Null, "json", None);
     assert_eq!(output, "");
 }
 
 #[test]
 fn test_format_exec_result_string() {
     let result = json!("hello");
-    let output = format_exec_result(&result, "json");
+    let output = format_exec_result(&result, "json", None);
     assert_eq!(output, "hello");
 }
 
 #[test]
 fn test_format_exec_result_array() {
     let result = json!([1, 2, 3]);
-    let output = format_exec_result(&result, "json");
+    let output = format_exec_result(&result, "json", None);
     let parsed: serde_json::Value = serde_json::from_str(&output).expect("must be valid JSON");
     assert!(parsed.is_array());
 }

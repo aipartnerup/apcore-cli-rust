@@ -96,19 +96,47 @@ fn module_has_all_tags(module: &Value, tags: &[&str]) -> bool {
 // cmd_list
 // ---------------------------------------------------------------------------
 
+/// Options for the enhanced list command (FE-11 F7).
+#[derive(Default)]
+pub struct ListOptions<'a> {
+    pub tags: &'a [&'a str],
+    pub explicit_format: Option<&'a str>,
+    pub search: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub annotations: &'a [&'a str],
+    pub sort: Option<&'a str>,
+    pub reverse: bool,
+    pub deprecated: bool,
+}
+
 /// Execute the `list` subcommand logic.
 ///
 /// Returns `Ok(String)` with the formatted output on success.
 /// Returns `Err(DiscoveryError)` on invalid tag format.
 ///
-/// Exit code mapping for the caller: `DiscoveryError::InvalidTag` → exit 2.
+/// Exit code mapping for the caller: `DiscoveryError::InvalidTag` -> exit 2.
 pub fn cmd_list(
     registry: &dyn RegistryProvider,
     tags: &[&str],
     explicit_format: Option<&str>,
 ) -> Result<String, DiscoveryError> {
+    cmd_list_enhanced(
+        registry,
+        &ListOptions {
+            tags,
+            explicit_format,
+            ..Default::default()
+        },
+    )
+}
+
+/// Enhanced list with full filter/sort options (FE-11 F7).
+pub fn cmd_list_enhanced(
+    registry: &dyn RegistryProvider,
+    opts: &ListOptions<'_>,
+) -> Result<String, DiscoveryError> {
     // Validate all tag formats before filtering.
-    for tag in tags {
+    for tag in opts.tags {
         if !validate_tag(tag) {
             return Err(DiscoveryError::InvalidTag(tag.to_string()));
         }
@@ -122,12 +150,77 @@ pub fn cmd_list(
         .collect();
 
     // Apply AND tag filter if any tags were specified.
-    if !tags.is_empty() {
-        modules.retain(|m| module_has_all_tags(m, tags));
+    if !opts.tags.is_empty() {
+        modules.retain(|m| module_has_all_tags(m, opts.tags));
     }
 
-    let fmt = crate::output::resolve_format(explicit_format);
-    Ok(crate::output::format_module_list(&modules, fmt, tags))
+    // F7: Search filter (case-insensitive substring on id + description).
+    if let Some(query) = opts.search {
+        let q = query.to_lowercase();
+        modules.retain(|m| {
+            let id = m
+                .get("module_id")
+                .or_else(|| m.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let desc = m.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            id.to_lowercase().contains(&q) || desc.to_lowercase().contains(&q)
+        });
+    }
+
+    // F7: Status filter.
+    match opts.status.unwrap_or("enabled") {
+        "enabled" => {
+            modules.retain(|m| m.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true));
+        }
+        "disabled" => {
+            modules.retain(|m| m.get("enabled").and_then(|v| v.as_bool()) == Some(false));
+        }
+        _ => {} // "all": no filter
+    }
+
+    // F7: Deprecated filter (excluded by default).
+    if !opts.deprecated {
+        modules.retain(|m| m.get("deprecated").and_then(|v| v.as_bool()) != Some(true));
+    }
+
+    // F7: Annotation filter (AND logic).
+    if !opts.annotations.is_empty() {
+        for ann_flag in opts.annotations {
+            let attr = match *ann_flag {
+                "requires-approval" => "requires_approval",
+                other => other,
+            };
+            modules.retain(|m| {
+                m.get("annotations")
+                    .and_then(|a| a.get(attr))
+                    .and_then(|v| v.as_bool())
+                    == Some(true)
+            });
+        }
+    }
+
+    // F7: Sort — usage-based sorts require system.usage modules.
+    let sort_key = opts.sort.unwrap_or("id");
+    if matches!(sort_key, "calls" | "errors" | "latency") {
+        eprintln!(
+            "Warning: Usage data not available; sorting by id. Sort by {} requires system.usage modules.",
+            sort_key
+        );
+    }
+    modules.sort_by(|a, b| {
+        let aid = a.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
+        let bid = b.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
+        aid.cmp(bid)
+    });
+
+    // F7: Reverse sort.
+    if opts.reverse {
+        modules.reverse();
+    }
+
+    let fmt = crate::output::resolve_format(opts.explicit_format);
+    Ok(crate::output::format_module_list(&modules, fmt, opts.tags))
 }
 
 // ---------------------------------------------------------------------------
@@ -190,9 +283,74 @@ fn list_command() -> Command {
         .arg(
             Arg::new("format")
                 .long("format")
-                .value_parser(clap::builder::PossibleValuesParser::new(["table", "json"]))
+                .value_parser(clap::builder::PossibleValuesParser::new([
+                    "table", "json", "csv", "yaml", "jsonl",
+                ]))
                 .value_name("FORMAT")
                 .help("Output format. Default: table (TTY) or json (non-TTY)."),
+        )
+        .arg(
+            Arg::new("search")
+                .long("search")
+                .short('s')
+                .value_name("QUERY")
+                .help("Filter by substring match on ID and description."),
+        )
+        .arg(
+            Arg::new("status")
+                .long("status")
+                .value_parser(["enabled", "disabled", "all"])
+                .default_value("enabled")
+                .value_name("STATUS")
+                .help("Filter by module status. Default: enabled."),
+        )
+        .arg(
+            Arg::new("annotation")
+                .long("annotation")
+                .short('a')
+                .action(ArgAction::Append)
+                .value_parser([
+                    "destructive",
+                    "requires-approval",
+                    "readonly",
+                    "streaming",
+                    "cacheable",
+                    "idempotent",
+                ])
+                .value_name("ANN")
+                .help("Filter by annotation flag (AND logic). Repeatable."),
+        )
+        .arg(
+            Arg::new("sort")
+                .long("sort")
+                .value_parser(["id", "calls", "errors", "latency"])
+                .default_value("id")
+                .value_name("FIELD")
+                .help("Sort order. Default: id."),
+        )
+        .arg(
+            Arg::new("reverse")
+                .long("reverse")
+                .action(ArgAction::SetTrue)
+                .help("Reverse sort order."),
+        )
+        .arg(
+            Arg::new("deprecated")
+                .long("deprecated")
+                .action(ArgAction::SetTrue)
+                .help("Include deprecated modules."),
+        )
+        .arg(
+            Arg::new("deps")
+                .long("deps")
+                .action(ArgAction::SetTrue)
+                .help("Show dependency count column."),
+        )
+        .arg(
+            Arg::new("flat")
+                .long("flat")
+                .action(ArgAction::SetTrue)
+                .help("Show flat list (no grouping)."),
         )
 }
 

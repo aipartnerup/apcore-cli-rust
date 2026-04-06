@@ -21,6 +21,9 @@ pub(crate) fn resolve_format_inner(explicit_format: Option<&str>, is_tty: bool) 
         return match fmt {
             "json" => "json",
             "table" => "table",
+            "csv" => "csv",
+            "yaml" => "yaml",
+            "jsonl" => "jsonl",
             other => {
                 // Unknown format: log a warning and fall back to json.
                 // (Invalid values are caught by clap upstream; this is a safety net.)
@@ -109,6 +112,16 @@ fn extract_tags(v: &Value) -> Vec<String> {
 ///
 /// Returns the formatted string ready for printing to stdout.
 pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str]) -> String {
+    format_module_list_with_deps(modules, format, filter_tags, false)
+}
+
+/// Format module list with optional dependency count column.
+pub fn format_module_list_with_deps(
+    modules: &[Value],
+    format: &str,
+    filter_tags: &[&str],
+    show_deps: bool,
+) -> String {
     use comfy_table::{ContentArrangement, Table};
 
     match format {
@@ -125,14 +138,26 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
 
             let mut table = Table::new();
             table.set_content_arrangement(ContentArrangement::Dynamic);
-            table.set_header(vec!["ID", "Description", "Tags"]);
+            if show_deps {
+                table.set_header(vec!["ID", "Description", "Tags", "Deps"]);
+            } else {
+                table.set_header(vec!["ID", "Description", "Tags"]);
+            }
 
             for m in modules {
                 let id = extract_str(m, &["module_id", "id", "canonical_id", "name"]);
                 let desc_raw = extract_str(m, &["description"]);
                 let desc = truncate(desc_raw, DESCRIPTION_TRUNCATE_LEN);
                 let tags = extract_tags(m).join(", ");
-                table.add_row(vec![id.to_string(), desc, tags]);
+                if show_deps {
+                    let dep_count = m
+                        .get("dependencies")
+                        .and_then(|v| v.as_array())
+                        .map_or(0, |a| a.len());
+                    table.add_row(vec![id.to_string(), desc, tags, dep_count.to_string()]);
+                } else {
+                    table.add_row(vec![id.to_string(), desc, tags]);
+                }
             }
 
             table.to_string()
@@ -335,21 +360,127 @@ pub fn format_module_detail(module: &Value, format: &str) -> String {
 // format_exec_result
 // ---------------------------------------------------------------------------
 
+/// Apply field selection to a JSON object.
+///
+/// `fields` is a comma-separated list of dot-paths (e.g. `"status,data.count"`).
+/// Returns a new object containing only the selected fields.
+fn apply_field_selection(result: &Value, fields: &str) -> Value {
+    if let Some(obj) = result.as_object() {
+        let mut selected = serde_json::Map::new();
+        for field in fields.split(',') {
+            let field = field.trim();
+            if field.is_empty() {
+                continue;
+            }
+            let mut val: &Value = &Value::Object(obj.clone());
+            for part in field.split('.') {
+                if let Some(next) = val.get(part) {
+                    val = next;
+                } else {
+                    val = &Value::Null;
+                    break;
+                }
+            }
+            selected.insert(field.to_string(), val.clone());
+        }
+        Value::Object(selected)
+    } else {
+        result.clone()
+    }
+}
+
 /// Render a module execution result.
 ///
 /// # Arguments
 /// * `result` — `serde_json::Value` (the `output` field from the executor response)
-/// * `format` — `"table"` or `"json"`
-pub fn format_exec_result(result: &Value, format: &str) -> String {
+/// * `format` — `"table"`, `"json"`, `"csv"`, `"yaml"`, or `"jsonl"`
+/// * `fields` — optional comma-separated dot-paths to select from the result
+pub fn format_exec_result(result: &Value, format: &str, fields: Option<&str>) -> String {
     use comfy_table::{ContentArrangement, Table};
 
-    match result {
+    let result = if let Some(f) = fields {
+        apply_field_selection(result, f)
+    } else {
+        result.clone()
+    };
+
+    match &result {
         Value::Null => String::new(),
 
         Value::String(s) => s.clone(),
 
+        Value::Object(_) if format == "csv" => {
+            let obj = result.as_object().unwrap();
+            let keys: Vec<&String> = obj.keys().collect();
+            let header = keys
+                .iter()
+                .map(|k| k.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            let values = keys
+                .iter()
+                .map(|k| {
+                    let v = obj.get(*k).unwrap();
+                    match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{header}\n{values}")
+        }
+
+        Value::Array(arr) if format == "csv" => {
+            if arr.is_empty() {
+                return String::new();
+            }
+            if let Some(first_obj) = arr[0].as_object() {
+                let keys: Vec<&String> = first_obj.keys().collect();
+                let header = keys
+                    .iter()
+                    .map(|k| k.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let mut rows = vec![header];
+                for item in arr {
+                    if let Some(obj) = item.as_object() {
+                        let row = keys
+                            .iter()
+                            .map(|k| {
+                                let v = obj.get(*k).unwrap_or(&Value::Null);
+                                match v {
+                                    Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        rows.push(row);
+                    }
+                }
+                rows.join("\n")
+            } else {
+                serde_json::to_string(&result).unwrap_or_default()
+            }
+        }
+
+        _ if format == "yaml" => serde_yaml::to_string(&result)
+            .map(|s| s.trim_end().to_string())
+            .unwrap_or_else(|_| {
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| "null".to_string())
+            }),
+
+        Value::Array(arr) if format == "jsonl" => arr
+            .iter()
+            .map(|item| serde_json::to_string(item).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n"),
+
+        _ if format == "jsonl" => serde_json::to_string(&result).unwrap_or_default(),
+
         Value::Object(_) if format == "table" => {
-            let obj = result.as_object().unwrap(); // safe: matched Object above
+            let obj = result.as_object().unwrap();
             let mut table = Table::new();
             table.set_content_arrangement(ContentArrangement::Dynamic);
             table.set_header(vec!["Key", "Value"]);
@@ -364,10 +495,10 @@ pub fn format_exec_result(result: &Value, format: &str) -> String {
         }
 
         Value::Object(_) | Value::Array(_) => {
-            serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".to_string())
+            serde_json::to_string_pretty(&result).unwrap_or_else(|_| "null".to_string())
         }
 
-        // Number, Bool — convert to display string.
+        // Number, Bool -- convert to display string.
         other => other.to_string(),
     }
 }
@@ -531,14 +662,14 @@ mod tests {
 
     #[test]
     fn test_format_exec_result_null_returns_empty() {
-        let output = format_exec_result(&Value::Null, "json");
+        let output = format_exec_result(&Value::Null, "json", None);
         assert_eq!(output, "", "Null result must produce empty string");
     }
 
     #[test]
     fn test_format_exec_result_string_plain() {
         let result = json!("hello world");
-        let output = format_exec_result(&result, "json");
+        let output = format_exec_result(&result, "json", None);
         assert_eq!(output, "hello world");
     }
 
@@ -546,14 +677,14 @@ mod tests {
     fn test_format_exec_result_string_table_mode_also_plain() {
         // Strings are always printed raw, regardless of format.
         let result = json!("hello");
-        let output = format_exec_result(&result, "table");
+        let output = format_exec_result(&result, "table", None);
         assert_eq!(output, "hello");
     }
 
     #[test]
     fn test_format_exec_result_object_json_mode() {
         let result = json!({"sum": 42, "status": "ok"});
-        let output = format_exec_result(&result, "json");
+        let output = format_exec_result(&result, "json", None);
         let parsed: serde_json::Value = serde_json::from_str(&output).expect("must be valid JSON");
         assert_eq!(parsed["sum"], 42);
         assert_eq!(parsed["status"], "ok");
@@ -562,7 +693,7 @@ mod tests {
     #[test]
     fn test_format_exec_result_object_table_mode() {
         let result = json!({"key": "value", "count": 3});
-        let output = format_exec_result(&result, "table");
+        let output = format_exec_result(&result, "table", None);
         // Table must contain both keys and their values.
         assert!(output.contains("key"), "table must contain 'key'");
         assert!(output.contains("value"), "table must contain 'value'");
@@ -573,7 +704,7 @@ mod tests {
     #[test]
     fn test_format_exec_result_array_is_json() {
         let result = json!([1, 2, 3]);
-        let output = format_exec_result(&result, "json");
+        let output = format_exec_result(&result, "json", None);
         let parsed: serde_json::Value = serde_json::from_str(&output).expect("must be valid JSON");
         assert!(parsed.is_array());
         assert_eq!(parsed.as_array().unwrap().len(), 3);
@@ -583,7 +714,7 @@ mod tests {
     fn test_format_exec_result_array_table_mode_is_json() {
         // Arrays always render as JSON, even in table mode.
         let result = json!([{"a": 1}, {"b": 2}]);
-        let output = format_exec_result(&result, "table");
+        let output = format_exec_result(&result, "table", None);
         let parsed: serde_json::Value =
             serde_json::from_str(&output).expect("array must produce JSON");
         assert!(parsed.is_array());
@@ -592,21 +723,21 @@ mod tests {
     #[test]
     fn test_format_exec_result_number_scalar() {
         let result = json!(42);
-        let output = format_exec_result(&result, "json");
+        let output = format_exec_result(&result, "json", None);
         assert_eq!(output, "42");
     }
 
     #[test]
     fn test_format_exec_result_bool_scalar() {
         let result = json!(true);
-        let output = format_exec_result(&result, "json");
+        let output = format_exec_result(&result, "json", None);
         assert_eq!(output, "true");
     }
 
     #[test]
     fn test_format_exec_result_float_scalar() {
         let result = json!(3.15);
-        let output = format_exec_result(&result, "json");
+        let output = format_exec_result(&result, "json", None);
         assert!(output.starts_with("3.15"), "float must stringify correctly");
     }
 

@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.6.0] - 2026-04-06
+
+### Changed
+
+- **Dependency bump**: requires `apcore = 0.17.1` (was `0.15.1`). Adds Execution Pipeline Strategy, Config Bus enhancements, Pipeline v2 declarative step metadata, `minimal` strategy preset.
+- `CliConfig::group_depth` default changed from 0 to 1 (custom `Default` impl).
+- Error tuple in executor path changed to `(i32, String, Option<Value>)` to carry structured error data for FE-11 enhanced error output.
+
+### Added
+
+- **FE-11: Usability Enhancements** — 11 new capabilities:
+  - `--dry-run` preflight mode. Standalone `validate` command in `validate.rs` with `format_preflight_result()` and `first_failed_exit_code()`.
+  - System management commands: `health`, `usage`, `enable`, `disable`, `reload`, `config get`/`config set` in `system_cmd.rs`. Graceful no-op when system modules unavailable.
+  - Enhanced error output: `emit_error_json()` / `emit_error_tty()` with structured guidance fields from `Option<&Value>`.
+  - `--trace` pipeline visualization with timing data.
+  - `CliApprovalHandler` struct in `approval.rs`. `--approval-timeout`, `--approval-token` flags.
+  - `--stream` JSONL output.
+  - Enhanced `list` command: `--search`, `--status`, `--annotation`, `--sort`, `--reverse`, `--deprecated`, `--deps`, `--flat`. `ListOptions` struct.
+  - `--strategy` selection: `standard`, `internal`, `testing`, `performance`, `minimal`. `describe-pipeline` command in `strategy.rs` with Pure/Removable/Timeout columns.
+  - Output format extensions: `--format csv|yaml|jsonl`, `--fields` dot-path field selection. `format_module_list_with_deps()`.
+  - Multi-level grouping: `CliConfig::group_depth`.
+  - Custom command extension: `CliConfig::extra_commands: Vec<clap::Command>`.
+- New error code constant: `EXIT_CONFIG_ENV_MAP_CONFLICT`.
+- New files: `system_cmd.rs`, `strategy.rs`, `validate.rs`.
+- `BUILTIN_COMMANDS` expanded to 14 entries. `KNOWN_BUILTINS` in `shell.rs` updated to match.
+- `RESERVED_FLAG_NAMES` expanded with all FE-11 flag names.
+
+---
+
 ## [0.5.1] - 2026-04-03
 
 ### Added

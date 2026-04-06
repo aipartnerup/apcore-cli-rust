@@ -256,6 +256,31 @@ pub async fn check_approval(
 }
 
 // ---------------------------------------------------------------------------
+// CliApprovalHandler -- implements apcore ApprovalHandler protocol (FE-11 S3.5)
+// ---------------------------------------------------------------------------
+
+/// CLI-side approval handler that wraps the TTY prompt logic.
+///
+/// Designed to be compatible with the apcore ApprovalHandler trait/protocol.
+/// Pass to Executor via `executor.set_approval_handler(handler)` if available.
+pub struct CliApprovalHandler {
+    /// If true, all approvals are auto-granted (--yes flag).
+    pub auto_approve: bool,
+    /// Timeout in seconds for interactive prompts.
+    pub timeout: u64,
+}
+
+impl CliApprovalHandler {
+    /// Create a new handler with the given settings.
+    pub fn new(auto_approve: bool, timeout: u64) -> Self {
+        Self {
+            auto_approve,
+            timeout: timeout.clamp(1, 3600),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 

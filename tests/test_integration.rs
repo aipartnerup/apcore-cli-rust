@@ -27,7 +27,7 @@ fn test_schema_to_args_then_format_result() {
 
     // Simulate an execution result and format it.
     let result = json!({"greeting": "Hello, Alice!"});
-    let output = format_exec_result(&result, "json");
+    let output = format_exec_result(&result, "json", None);
     assert!(
         output.contains("greeting"),
         "JSON output should contain result key"
