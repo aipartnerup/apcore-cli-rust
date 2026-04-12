@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.7.0] - 2026-04-12
+
+### Added
+
+- **FE-12: Module Exposure Filtering** — Declarative control over which discovered modules are exposed as CLI commands.
+  - `ExposureFilter` struct in `exposure.rs` with `is_exposed(&self, module_id)` and `filter_modules(&self, ids)` methods.
+  - Three modes: `All` (default), `Include` (whitelist), `Exclude` (blacklist) with glob-pattern matching.
+  - `ExposureFilter::from_config(value)` constructor for loading from `apcore.yaml` `expose` section.
+  - `CliConfig::expose` field for programmatic usage.
+  - `list --exposure {exposed,hidden,all}` filter flag in discovery commands.
+  - `GroupedModuleGroup` integration: applies exposure filter during command registration.
+  - `ConfigResolver` gains `expose.*` config keys.
+  - 4-tier config precedence: `CliConfig.expose` > `--expose-mode` CLI flag > env var > `apcore.yaml`.
+  - Hidden modules remain invocable via `exec <module_id>`.
+- New file: `exposure.rs`.
+
+### Fixed
+
+- Correctly propagate executor errors by moving `map_err` inside the `block_in_place` scope.
+
+### Changed
+
+- Centralized CLI dispatch flags and builtin command definitions to improve maintainability.
+
+---
+
 ## [0.6.0] - 2026-04-06
 
 ### Changed
