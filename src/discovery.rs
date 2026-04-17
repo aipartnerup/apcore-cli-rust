@@ -382,14 +382,31 @@ fn describe_command() -> Command {
 /// stores descriptors but not module implementations, so `Registry::list()`
 /// (which iterates over the modules map) would miss them.
 pub struct ApCoreRegistryProvider {
-    registry: apcore::Registry,
+    registry: std::sync::Arc<apcore::Registry>,
     discovered_names: Vec<String>,
     descriptions: std::collections::HashMap<String, String>,
 }
 
 impl ApCoreRegistryProvider {
-    /// Create a new adapter from a real apcore::Registry.
+    /// Create a new adapter from an owned `apcore::Registry`.
+    ///
+    /// The registry is wrapped in an `Arc` internally so the same underlying
+    /// store can be shared without copying.
     pub fn new(registry: apcore::Registry) -> Self {
+        Self {
+            registry: std::sync::Arc::new(registry),
+            discovered_names: Vec::new(),
+            descriptions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new adapter from an already-shared `Arc<apcore::Registry>`.
+    ///
+    /// Use this when the registry is owned by an [`apcore::APCore`] client —
+    /// e.g., in [`run_with_config`] when `CliConfig::app` is set — so the
+    /// adapter shares the client's registry without requiring an ownership
+    /// transfer.
+    pub fn from_arc(registry: std::sync::Arc<apcore::Registry>) -> Self {
         Self {
             registry,
             discovered_names: Vec::new(),
@@ -444,7 +461,7 @@ impl RegistryProvider for ApCoreRegistryProvider {
         &self,
         id: &str,
     ) -> Option<apcore::registry::registry::ModuleDescriptor> {
-        self.registry.get_definition(id).cloned()
+        self.registry.get_definition(id)
     }
 }
 

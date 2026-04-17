@@ -3,6 +3,15 @@
 
 mod common;
 
+// ---------------------------------------------------------------------------
+// Helpers shared by CliConfig integration tests
+// ---------------------------------------------------------------------------
+
+/// Build a minimal mock registry provider for tests that require one.
+fn make_mock_provider() -> apcore_cli::MockRegistry {
+    apcore_cli::MockRegistry::new(vec![])
+}
+
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Mutex;
@@ -237,4 +246,51 @@ fn builtin_flags_shown_when_verbose() {
     );
     // Reset to default state.
     apcore_cli::cli::set_verbose_help(false);
+}
+
+// ---------------------------------------------------------------------------
+// CliConfig validation -- integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cli_config_app_validates_ok() {
+    let config = apcore_cli::CliConfig {
+        app: Some(apcore::APCore::new()),
+        ..Default::default()
+    };
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_cli_config_app_rejects_registry() {
+    use std::sync::Arc;
+    let config = apcore_cli::CliConfig {
+        app: Some(apcore::APCore::new()),
+        registry: Some(Arc::new(make_mock_provider())),
+        ..Default::default()
+    };
+    let err = config.validate().unwrap_err();
+    assert!(err.to_string().contains("mutually exclusive"));
+}
+
+#[tokio::test]
+async fn test_run_with_config_validates_conflict() {
+    use std::sync::Arc;
+    let config = apcore_cli::CliConfig {
+        app: Some(apcore::APCore::new()),
+        registry: Some(Arc::new(make_mock_provider())),
+        ..Default::default()
+    };
+    let exit_code = apcore_cli::run_with_config(config, vec![]).await;
+    assert_eq!(exit_code, 1);
+}
+
+#[tokio::test]
+async fn test_run_with_config_app_only_returns_zero() {
+    let config = apcore_cli::CliConfig {
+        app: Some(apcore::APCore::new()),
+        ..Default::default()
+    };
+    let exit_code = apcore_cli::run_with_config(config, vec![]).await;
+    assert_eq!(exit_code, 0);
 }

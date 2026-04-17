@@ -114,7 +114,7 @@ impl FsDiscoverer {
 
 #[async_trait]
 impl Discoverer for FsDiscoverer {
-    async fn discover(&self) -> Result<Vec<DiscoveredModule>, ModuleError> {
+    async fn discover(&self, _roots: &[String]) -> Result<Vec<DiscoveredModule>, ModuleError> {
         let paths = Self::collect_module_jsons(&self.root);
         let mut modules = Vec::new();
 
@@ -222,7 +222,7 @@ mod tests {
         );
 
         let discoverer = FsDiscoverer::new(root);
-        let modules = discoverer.discover().await.unwrap();
+        let modules = discoverer.discover(&[]).await.unwrap();
         assert_eq!(modules.len(), 2);
 
         let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
@@ -234,14 +234,14 @@ mod tests {
     async fn test_discover_empty_dir() {
         let tmp = TempDir::new().unwrap();
         let discoverer = FsDiscoverer::new(tmp.path());
-        let modules = discoverer.discover().await.unwrap();
+        let modules = discoverer.discover(&[]).await.unwrap();
         assert!(modules.is_empty());
     }
 
     #[tokio::test]
     async fn test_discover_nonexistent_dir() {
         let discoverer = FsDiscoverer::new("/nonexistent/path/xxx");
-        let modules = discoverer.discover().await.unwrap();
+        let modules = discoverer.discover(&[]).await.unwrap();
         assert!(modules.is_empty());
     }
 
@@ -253,7 +253,7 @@ mod tests {
         fs::write(dir.join("module.json"), "not valid json").unwrap();
 
         let discoverer = FsDiscoverer::new(tmp.path());
-        let result = discoverer.discover().await;
+        let result = discoverer.discover(&[]).await;
         assert!(result.is_err());
     }
 
@@ -268,7 +268,7 @@ mod tests {
         );
 
         let discoverer = FsDiscoverer::new(tmp.path());
-        let modules = discoverer.discover().await.unwrap();
+        let modules = discoverer.discover(&[]).await.unwrap();
         assert_eq!(modules.len(), 1);
 
         let m = &modules[0];
@@ -290,10 +290,10 @@ mod tests {
         );
 
         let discoverer = FsDiscoverer::new(tmp.path());
-        let mut registry = apcore::Registry::new();
-        let names = registry.discover(&discoverer).await.unwrap();
+        let registry = apcore::Registry::new();
+        let count = registry.discover(&discoverer).await.unwrap();
 
-        assert_eq!(names, vec!["math.add"]);
+        assert_eq!(count, 1);
         assert!(registry.get_definition("math.add").is_some());
     }
 }

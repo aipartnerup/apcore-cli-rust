@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.7.0] - 2026-04-15
+
+### Changed
+
+- **Dependency bump**: requires `apcore = 0.18.0` (was `0.17.1`).
+- `MAX_MODULE_ID_LENGTH` updated to 192 (was 128) — `cli.rs` constant `MODULE_ID_MAX_LEN` and
+  `validate_module_id` already tracked the upstream spec change.
+- `describe-pipeline` rendering updated to build a `StrategyInfo` value (new `apcore 0.18.0`
+  type) from preset step data and use its `name` / `step_count` / `step_names` fields for
+  display. Header format: `Pipeline: <name> (<n> steps)`.
+- `FsDiscoverer::discover` signature updated to `discover(&self, _roots: &[String])` to match the
+  new `apcore::registry::Discoverer` trait contract (`discover(roots: &[String])`).
+- `Registry::discover(&discoverer)` now returns `usize` (module count) instead of
+  `Vec<String>` — updated `main.rs` and `fs_discoverer.rs` tests accordingly.
+- `Registry::get_definition` now returns `Option<ModuleDescriptor>` (owned) instead of
+  `Option<&ModuleDescriptor>` — removed unnecessary `.cloned()` call in `discovery.rs`.
+
+### Added
+
+- `CliConfig::app: Option<apcore::APCore>` — accept a unified `APCore` client facade.
+  When `app` is set, `registry` and `executor` are derived from it. Setting `app` together
+  with `registry` or `executor` returns an error: `"app is mutually exclusive with
+  registry/executor"`.
+- `CliConfig::validate()` method — returns `Err(CliConfigError)` when `app` is set alongside
+  `registry` or `executor`.
+- `CliConfigError` error type for `CliConfig` validation failures.
+
+---
+
 ## [0.6.0] - 2026-04-06
 
 ### Changed

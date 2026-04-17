@@ -1,69 +1,29 @@
 // apcore-cli -- Pipeline strategy commands (FE-11).
 // Provides describe-pipeline subcommand showing execution pipeline steps.
 
+use apcore::StrategyInfo;
 use clap::{Arg, Command};
 use serde_json::Value;
 use std::io::IsTerminal;
 
 // ---------------------------------------------------------------------------
-// Preset strategy step definitions
+// Strategy info — delegates to apcore preset builders
 // ---------------------------------------------------------------------------
 
-/// Known preset pipeline strategies and their steps.
-fn preset_steps(strategy: &str) -> Vec<&'static str> {
+/// Return a `StrategyInfo` for the named preset strategy by invoking the
+/// canonical builder from the `apcore` crate. This ensures the CLI always
+/// reflects the same steps that the `apcore` executor actually uses, rather
+/// than maintaining a parallel hardcoded list that can drift out of sync.
+///
+/// Returns `None` for unknown strategy names.
+fn get_strategy_info(strategy: &str) -> Option<StrategyInfo> {
     match strategy {
-        "standard" => vec![
-            "context_creation",
-            "call_chain_guard",
-            "module_lookup",
-            "acl_check",
-            "approval_gate",
-            "middleware_before",
-            "input_validation",
-            "execute",
-            "output_validation",
-            "middleware_after",
-            "return_result",
-        ],
-        "internal" => vec![
-            "context_creation",
-            "call_chain_guard",
-            "module_lookup",
-            "middleware_before",
-            "input_validation",
-            "execute",
-            "output_validation",
-            "middleware_after",
-            "return_result",
-        ],
-        "testing" => vec![
-            "context_creation",
-            "module_lookup",
-            "middleware_before",
-            "input_validation",
-            "execute",
-            "output_validation",
-            "middleware_after",
-            "return_result",
-        ],
-        "performance" => vec![
-            "context_creation",
-            "call_chain_guard",
-            "module_lookup",
-            "acl_check",
-            "approval_gate",
-            "input_validation",
-            "execute",
-            "output_validation",
-            "return_result",
-        ],
-        "minimal" => vec![
-            "context_creation",
-            "module_lookup",
-            "execute",
-            "return_result",
-        ],
-        _ => vec![],
+        "standard" => Some(apcore::build_standard_strategy().info()),
+        "internal" => Some(apcore::build_internal_strategy().info()),
+        "testing" => Some(apcore::build_testing_strategy().info()),
+        "performance" => Some(apcore::build_performance_strategy().info()),
+        "minimal" => Some(apcore::build_minimal_strategy().info()),
+        _ => None,
     }
 }
 
@@ -110,7 +70,13 @@ pub fn dispatch_describe_pipeline(matches: &clap::ArgMatches) {
     let format = matches.get_one::<String>("format").map(|s| s.as_str());
     let fmt = crate::output::resolve_format(format);
 
-    let steps = preset_steps(strategy);
+    let info = match get_strategy_info(strategy) {
+        Some(info) => info,
+        None => {
+            eprintln!("Error: Unknown strategy: {strategy}");
+            std::process::exit(2);
+        }
+    };
 
     // Step metadata: which steps are pure and which are non-removable.
     let pure_steps = [
@@ -128,21 +94,22 @@ pub fn dispatch_describe_pipeline(matches: &clap::ArgMatches) {
     ];
 
     if fmt == "json" || !std::io::stdout().is_terminal() {
-        let steps_json: Vec<Value> = steps
+        let steps_json: Vec<Value> = info
+            .step_names
             .iter()
             .enumerate()
             .map(|(i, s)| {
                 serde_json::json!({
                     "index": i + 1,
                     "name": s,
-                    "pure": pure_steps.contains(s),
-                    "removable": !non_removable.contains(s),
+                    "pure": pure_steps.contains(&s.as_str()),
+                    "removable": !non_removable.contains(&s.as_str()),
                 })
             })
             .collect();
         let payload = serde_json::json!({
-            "strategy": strategy,
-            "step_count": steps.len(),
+            "strategy": info.name,
+            "step_count": info.step_count,
             "steps": steps_json,
         });
         println!(
@@ -150,12 +117,16 @@ pub fn dispatch_describe_pipeline(matches: &clap::ArgMatches) {
             serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
         );
     } else {
-        println!("Pipeline: {strategy} ({} steps)\n", steps.len());
+        println!("Pipeline: {} ({} steps)\n", info.name, info.step_count);
         println!("  #    Step                         Pure   Removable   Timeout");
         println!("  ---- ---------------------------- ------ ----------- --------");
-        for (i, s) in steps.iter().enumerate() {
-            let pure = if pure_steps.contains(s) { "yes" } else { "no" };
-            let removable = if non_removable.contains(s) {
+        for (i, s) in info.step_names.iter().enumerate() {
+            let pure = if pure_steps.contains(&s.as_str()) {
+                "yes"
+            } else {
+                "no"
+            };
+            let removable = if non_removable.contains(&s.as_str()) {
                 "no"
             } else {
                 "yes"
@@ -176,38 +147,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_preset_steps_standard() {
-        let steps = preset_steps("standard");
-        assert_eq!(steps.len(), 11);
-        assert_eq!(steps[0], "context_creation");
-        assert_eq!(steps[7], "execute");
+    fn test_get_strategy_info_standard() {
+        let info = get_strategy_info("standard").expect("standard strategy must exist");
+        assert_eq!(info.step_count, 11);
+        assert_eq!(info.step_names[0], "context_creation");
+        assert!(info.step_names.contains(&"execute".to_string()));
+        assert_eq!(info.name, "standard");
     }
 
     #[test]
-    fn test_preset_steps_internal() {
-        let steps = preset_steps("internal");
-        assert_eq!(steps.len(), 9);
-        assert!(!steps.contains(&"acl_check"));
+    fn test_get_strategy_info_internal() {
+        let info = get_strategy_info("internal").expect("internal strategy must exist");
+        assert_eq!(info.step_count, 9);
+        assert!(!info.step_names.contains(&"acl_check".to_string()));
     }
 
     #[test]
-    fn test_preset_steps_testing() {
-        let steps = preset_steps("testing");
-        assert_eq!(steps.len(), 8);
-        assert!(!steps.contains(&"call_chain_guard"));
+    fn test_get_strategy_info_testing() {
+        let info = get_strategy_info("testing").expect("testing strategy must exist");
+        assert_eq!(info.step_count, 8);
+        assert!(!info.step_names.contains(&"call_chain_guard".to_string()));
     }
 
     #[test]
-    fn test_preset_steps_performance() {
-        let steps = preset_steps("performance");
-        assert_eq!(steps.len(), 9);
-        assert!(!steps.contains(&"middleware_before"));
+    fn test_get_strategy_info_performance() {
+        let info = get_strategy_info("performance").expect("performance strategy must exist");
+        assert_eq!(info.step_count, 9);
+        assert!(!info.step_names.contains(&"middleware_before".to_string()));
     }
 
     #[test]
-    fn test_preset_steps_unknown() {
-        let steps = preset_steps("unknown");
-        assert!(steps.is_empty());
+    fn test_get_strategy_info_minimal() {
+        let info = get_strategy_info("minimal").expect("minimal strategy must exist");
+        assert!(info.step_count <= 4);
+        assert!(info.step_names.contains(&"execute".to_string()));
+    }
+
+    #[test]
+    fn test_get_strategy_info_unknown_returns_none() {
+        assert!(get_strategy_info("unknown").is_none());
+        assert!(get_strategy_info("").is_none());
     }
 
     #[test]

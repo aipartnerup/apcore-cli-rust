@@ -410,15 +410,13 @@ async fn main() {
         .unwrap_or_else(|| "./extensions".to_string());
 
     // Discover modules once — share the single registry for both provider and executor.
-    let mut registry = apcore::Registry::new();
+    let registry = apcore::Registry::new();
     let discoverer = apcore_cli::FsDiscoverer::new(&extensions_dir_for_discovery);
-    let discovered_names = match registry.discover(&discoverer).await {
-        Ok(names) => names,
-        Err(e) => {
-            tracing::warn!("Module discovery failed: {e}");
-            Vec::new()
-        }
-    };
+    if let Err(e) = registry.discover(&discoverer).await {
+        tracing::warn!("Module discovery failed: {e}");
+    }
+    // Collect discovered names from the registry after discovery.
+    let discovered_names: Vec<String> = registry.list(None, None);
 
     // Store discovered executables in the global map for dispatch_module.
     apcore_cli::set_executables(discoverer.executables_snapshot());
@@ -445,13 +443,13 @@ async fn main() {
     }
 
     // Build the apcore executor from the discovered registry.
-    let apcore_executor = apcore::Executor::new(registry, apcore::Config::default());
+    let apcore_executor =
+        apcore::Executor::new(std::sync::Arc::new(registry), apcore::Config::default());
 
     // Build the provider from a second registry for list/describe.
-    // Executor::new() consumes the first registry, so we re-discover here.
     // The filesystem scan is fast (local directory) and the discoverer
     // caches executable paths from the first scan.
-    let mut provider_registry = apcore::Registry::new();
+    let provider_registry = apcore::Registry::new();
     let _ = provider_registry.discover(&discoverer).await;
     let mut provider = apcore_cli::discovery::ApCoreRegistryProvider::new(provider_registry);
     provider.set_discovered_names(discovered_names);
