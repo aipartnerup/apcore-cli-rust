@@ -28,6 +28,17 @@ pub fn init_command() -> clap::Command {
         )
 }
 
+/// Attach the `init` subcommand to the given command. Returns the command
+/// with the subcommand added.
+///
+/// This mirrors the per-subcommand registrar pattern used by the FE-13
+/// built-in group (see `discovery::register_list_command`,
+/// `system_cmd::register_health_command`, etc.) so the dispatcher can
+/// honor include/exclude filtering on `init` like any other built-in.
+pub fn register_init_command(cli: clap::Command) -> clap::Command {
+    cli.subcommand(init_command())
+}
+
 /// Handle the `init` subcommand dispatch.
 pub fn handle_init(matches: &clap::ArgMatches) {
     if let Some(("module", sub_m)) = matches.subcommand() {
@@ -378,5 +389,26 @@ mod tests {
         let result =
             cmd.try_get_matches_from(vec!["init", "module", "my.module", "--style", "decorator"]);
         assert!(result.is_ok(), "valid args must parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_register_init_command_attaches_init() {
+        let root = register_init_command(clap::Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(
+            subs.contains(&"init"),
+            "must have 'init' subcommand, got {subs:?}"
+        );
+
+        // Verify the init subcommand retains its 'module' sub-subcommand.
+        let init_sub = root
+            .get_subcommands()
+            .find(|c| c.get_name() == "init")
+            .expect("init subcommand");
+        let nested: Vec<&str> = init_sub.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(
+            nested.contains(&"module"),
+            "init must have 'module' sub-subcommand, got {nested:?}"
+        );
     }
 }

@@ -1,0 +1,27 @@
+{
+  "feature": "builtin-group",
+  "status": "completed",
+  "created_at": "2026-04-22",
+  "completed_at": "2026-04-22",
+  "spec_source": "../apcore-cli/docs/features/builtin-group.md",
+  "reference": "../apcore-cli-typescript",
+  "metadata": {
+    "apcore_version": "0.19.0",
+    "apcore_toolkit_version": "0.5.0",
+    "target_cli_version": "0.7.0",
+    "final_test_count": 643,
+    "make_check_status": "pass"
+  },
+  "tasks": [
+    { "id": "T01", "title": "Bump apcore 0.19.0 + toolkit 0.5.0", "status": "completed", "files": ["Cargo.toml", "CLAUDE.md", "src/fs_discoverer.rs", "src/cli.rs", "tests/test_cli.rs"] },
+    { "id": "T02", "title": "Create src/builtin_group.rs (ApcliGroup + tests)", "status": "completed", "files": ["src/builtin_group.rs", "src/lib.rs"] },
+    { "id": "T03", "title": "Add ConfigResolver::resolve_object", "status": "completed", "files": ["src/config.rs"] },
+    { "id": "T04", "title": "Split discovery.rs registrars", "status": "completed", "files": ["src/discovery.rs"] },
+    { "id": "T05", "title": "Split system_cmd/shell/strategy/init_cmd registrars", "status": "completed", "files": ["src/system_cmd.rs", "src/shell.rs", "src/init_cmd.rs"] },
+    { "id": "T06", "title": "Retire BUILTIN_COMMANDS → RESERVED_GROUP_NAMES", "status": "completed", "files": ["src/cli.rs", "src/shell.rs", "src/lib.rs"] },
+    { "id": "T07", "title": "Integrate apcli group into main.rs + CliConfig", "status": "completed", "files": ["src/main.rs", "src/lib.rs", "tests/test_e2e.rs", "Cargo.toml"] },
+    { "id": "T08", "title": "Integration tests (T-APCLI-01..41 parity)", "status": "completed", "files": ["tests/apcli_integration.rs"] },
+    { "id": "T09", "title": "Run make check / clippy / fmt", "status": "completed", "files": [] }
+  ],
+  "execution_order": ["T01", "T02", "T03", "T04", "T05", "T06", "T07", "T08", "T09"]
+}

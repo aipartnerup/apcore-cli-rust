@@ -149,8 +149,10 @@ fn build_test_module_command(name: &str) -> clap::Command {
     use apcore_cli::cli::build_module_command;
 
     let module_def = apcore::registry::registry::ModuleDescriptor {
-        name: name.to_string(),
-        annotations: apcore::module::ModuleAnnotations::default(),
+        module_id: name.to_string(),
+        name: None,
+        description: String::new(),
+        documentation: None,
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -159,9 +161,15 @@ fn build_test_module_command(name: &str) -> clap::Command {
             }
         }),
         output_schema: json!({}),
-        enabled: true,
+        version: "1.0.0".to_string(),
         tags: vec![],
+        annotations: Some(apcore::module::ModuleAnnotations::default()),
+        examples: vec![],
+        metadata: std::collections::HashMap::new(),
+        display: None,
+        sunset_date: None,
         dependencies: vec![],
+        enabled: true,
     };
     build_module_command(&module_def).expect("should build command")
 }

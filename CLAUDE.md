@@ -32,9 +32,9 @@
 - Rust edition: 2021
 - MSRV: 1.75+
 - Async runtime: tokio
-- apcore pinned exactly: `apcore = "=0.17.1"` (v0.6.0 bump, was 0.15.1)
-- Runtime schema validation: jsonschema 0.18 (added in v0.6.0 for Py/TS parity)
-- Optional: apcore-toolkit >= 0.4 behind the `toolkit` feature flag
+- apcore pinned exactly: `apcore = "=0.19.0"` (v0.7.0 bump, was 0.18.0)
+- Runtime schema validation: jsonschema 0.28
+- Optional: apcore-toolkit = "=0.5.0" behind the `toolkit` feature flag
 
 ## v0.6.0 Conventions
 

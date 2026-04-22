@@ -7,16 +7,60 @@ use std::io::IsTerminal;
 
 /// Register system management subcommands on the root command.
 ///
+/// **Retained for backward compatibility.** FE-13 integration should use the
+/// per-subcommand registrars ([`register_health_command`],
+/// [`register_usage_command`], [`register_enable_command`],
+/// [`register_disable_command`], [`register_reload_command`],
+/// [`register_config_command`]) so include/exclude filtering can be applied
+/// per subcommand. This wrapper preserves the pre-FE-13 call site shape for
+/// callers that have not yet migrated.
+///
 /// Returns the command with health, usage, enable, disable, reload, and
 /// config subcommands appended. If the caller determines system modules
 /// are unavailable it may skip calling this function entirely.
 pub fn register_system_commands(cli: Command) -> Command {
+    let cli = register_health_command(cli);
+    let cli = register_usage_command(cli);
+    let cli = register_enable_command(cli);
+    let cli = register_disable_command(cli);
+    let cli = register_reload_command(cli);
+    register_config_command(cli)
+}
+
+/// Attach the `health` subcommand to the given command. Returns the command
+/// with the subcommand added.
+pub fn register_health_command(cli: Command) -> Command {
     cli.subcommand(health_command())
-        .subcommand(usage_command())
-        .subcommand(enable_command())
-        .subcommand(disable_command())
-        .subcommand(reload_command())
-        .subcommand(config_command())
+}
+
+/// Attach the `usage` subcommand to the given command. Returns the command
+/// with the subcommand added.
+pub fn register_usage_command(cli: Command) -> Command {
+    cli.subcommand(usage_command())
+}
+
+/// Attach the `enable` subcommand to the given command. Returns the command
+/// with the subcommand added.
+pub fn register_enable_command(cli: Command) -> Command {
+    cli.subcommand(enable_command())
+}
+
+/// Attach the `disable` subcommand to the given command. Returns the command
+/// with the subcommand added.
+pub fn register_disable_command(cli: Command) -> Command {
+    cli.subcommand(disable_command())
+}
+
+/// Attach the `reload` subcommand to the given command. Returns the command
+/// with the subcommand added.
+pub fn register_reload_command(cli: Command) -> Command {
+    cli.subcommand(reload_command())
+}
+
+/// Attach the `config` subcommand group to the given command. Returns the
+/// command with the subcommand added.
+pub fn register_config_command(cli: Command) -> Command {
+    cli.subcommand(config_command())
 }
 
 /// Names of all system management subcommands.
@@ -826,5 +870,77 @@ mod tests {
         for name in SYSTEM_COMMANDS {
             assert!(subs.contains(name), "missing system command: {name}");
         }
+    }
+
+    #[test]
+    fn test_register_health_command_attaches_health() {
+        let root = register_health_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"health"));
+    }
+
+    #[test]
+    fn test_register_usage_command_attaches_usage() {
+        let root = register_usage_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"usage"));
+    }
+
+    #[test]
+    fn test_register_enable_command_attaches_enable() {
+        let root = register_enable_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"enable"));
+    }
+
+    #[test]
+    fn test_register_disable_command_attaches_disable() {
+        let root = register_disable_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"disable"));
+    }
+
+    #[test]
+    fn test_register_reload_command_attaches_reload() {
+        let root = register_reload_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"reload"));
+    }
+
+    #[test]
+    fn test_register_config_command_attaches_config() {
+        let root = register_config_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"config"));
+    }
+
+    #[test]
+    fn test_register_health_is_isolated() {
+        let root = register_health_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"health"));
+        assert!(!subs.contains(&"usage"));
+        assert!(!subs.contains(&"enable"));
+        assert!(!subs.contains(&"disable"));
+        assert!(!subs.contains(&"reload"));
+        assert!(!subs.contains(&"config"));
+    }
+
+    #[test]
+    fn test_register_usage_is_isolated() {
+        let root = register_usage_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"usage"));
+        assert!(!subs.contains(&"health"));
+        assert!(!subs.contains(&"enable"));
+    }
+
+    #[test]
+    fn test_register_config_is_isolated() {
+        let root = register_config_command(Command::new("root"));
+        let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(subs.contains(&"config"));
+        assert!(!subs.contains(&"health"));
+        assert!(!subs.contains(&"usage"));
     }
 }

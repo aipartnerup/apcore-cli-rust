@@ -138,6 +138,32 @@ impl ConfigResolver {
         self.defaults.get(key).map(|s| s.to_string())
     }
 
+    /// Resolve a non-leaf (object-valued) key from the YAML config file.
+    ///
+    /// Unlike [`Self::resolve`], which returns a flattened scalar string,
+    /// this returns the raw `serde_yaml::Value` living at the requested
+    /// dot-path. Used by FE-13 (`apcli`) where the top-level key can be a
+    /// bool, a mapping, or absent.
+    ///
+    /// Only consults the config file (Tier 3) — CLI flags and env vars
+    /// carry scalar values only. Returns `None` when the file is absent,
+    /// unreadable, malformed, or the key is missing.
+    pub fn resolve_object(&self, key: &str) -> Option<serde_yaml::Value> {
+        let path = self.config_path.as_ref()?;
+        let content = std::fs::read_to_string(path).ok()?;
+        let root: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
+        let mut cursor = &root;
+        for segment in key.split('.') {
+            match cursor {
+                serde_yaml::Value::Mapping(map) => {
+                    cursor = map.get(serde_yaml::Value::String(segment.to_string()))?;
+                }
+                _ => return None,
+            }
+        }
+        Some(cursor.clone())
+    }
+
     /// Look up the alternate key (namespace ↔ legacy) for backward compatibility.
     fn alternate_key(key: &str) -> Option<&'static str> {
         for &(ns, legacy) in Self::NAMESPACE_MAP {
@@ -507,6 +533,59 @@ mod tests {
         // Querying the legacy key should find the namespace key via fallback
         let result = resolver.resolve("cli.auto_approve", None, None);
         assert_eq!(result, Some("true".to_string()));
+    }
+
+    // ---- resolve_object (FE-13 non-leaf lookup) ----
+
+    fn write_tmp_yaml(body: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("apcore.yaml");
+        std::fs::write(&path, body).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn test_resolve_object_returns_bool_shorthand() {
+        let (_dir, path) = write_tmp_yaml("apcli: false\n");
+        let resolver = ConfigResolver::new(None, Some(path));
+        let v = resolver.resolve_object("apcli").expect("apcli key present");
+        assert!(matches!(v, serde_yaml::Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_resolve_object_returns_mapping() {
+        let (_dir, path) =
+            write_tmp_yaml("apcli:\n  mode: include\n  include:\n    - list\n    - describe\n");
+        let resolver = ConfigResolver::new(None, Some(path));
+        let v = resolver.resolve_object("apcli").expect("apcli key present");
+        let map = match v {
+            serde_yaml::Value::Mapping(m) => m,
+            _ => panic!("expected mapping"),
+        };
+        let mode = map
+            .get(serde_yaml::Value::String("mode".to_string()))
+            .unwrap();
+        assert_eq!(mode.as_str(), Some("include"));
+    }
+
+    #[test]
+    fn test_resolve_object_missing_key_returns_none() {
+        let (_dir, path) = write_tmp_yaml("other: 42\n");
+        let resolver = ConfigResolver::new(None, Some(path));
+        assert!(resolver.resolve_object("apcli").is_none());
+    }
+
+    #[test]
+    fn test_resolve_object_no_config_file_returns_none() {
+        let resolver = ConfigResolver::new(None, None);
+        assert!(resolver.resolve_object("apcli").is_none());
+    }
+
+    #[test]
+    fn test_resolve_object_malformed_yaml_returns_none() {
+        let (_dir, path) = write_tmp_yaml("apcli: {unclosed\n");
+        let resolver = ConfigResolver::new(None, Some(path));
+        assert!(resolver.resolve_object("apcli").is_none());
     }
 
     #[test]

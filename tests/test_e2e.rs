@@ -224,9 +224,10 @@ fn test_help_flag_exits_0_contains_builtins() {
     let out = run_apcore(&["--extensions-dir", "./examples/extensions", "--help"]);
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
-    for builtin in ["list", "describe", "completion"] {
-        assert!(stdout.contains(builtin), "help must mention '{builtin}'");
-    }
+    // FE-13: former root-level built-ins (list, describe, completion, ...)
+    // now live under the `apcli` group. Root --help shows the `apcli` entry
+    // plus root-level meta commands (`man`, `help`).
+    assert!(stdout.contains("apcli"), "help must mention 'apcli' group");
 }
 
 #[test]

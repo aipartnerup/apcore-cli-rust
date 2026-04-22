@@ -260,16 +260,66 @@ pub fn cmd_describe(
 }
 
 // ---------------------------------------------------------------------------
-// register_discovery_commands
+// Per-subcommand registrars (FE-13)
+// ---------------------------------------------------------------------------
+//
+// The TS reference (`apcore-cli-typescript/src/discovery.ts`) splits
+// registration into `registerListCommand`, `registerDescribeCommand`,
+// `registerExecCommand`, `registerValidateCommand` so that the FE-13 built-in
+// command-group dispatcher can honor include/exclude filtering on a
+// per-subcommand basis.
+//
+// In Rust, the executor/registry are not baked into `clap::Command` — dispatch
+// flows through a separate path (`dispatch_module`), so these registrars take
+// only a `Command` and return a `Command`. They are intentionally pure
+// "add-subcommand-and-return" helpers with no internal state mutation, which
+// makes them safe to invoke on either the root command or the `apcli`
+// sub-group (or reused from standalone deprecation shims).
+
+/// Attach the `list` subcommand to the given command (typically the `apcli`
+/// group). Returns the command with the subcommand added.
+pub fn register_list_command(cli: Command) -> Command {
+    cli.subcommand(list_command())
+}
+
+/// Attach the `describe` subcommand to the given command. Returns the command
+/// with the subcommand added.
+pub fn register_describe_command(cli: Command) -> Command {
+    cli.subcommand(describe_command())
+}
+
+/// Attach the `exec` subcommand to the given command. Delegates to
+/// [`crate::cli::exec_command`] to avoid duplicating the builder.
+pub fn register_exec_command(cli: Command) -> Command {
+    cli.subcommand(crate::cli::exec_command())
+}
+
+/// Attach the `validate` subcommand to the given command. Delegates to
+/// [`crate::validate::register_validate_command`] so there is a single
+/// definition of the validate builder.
+pub fn register_validate_command(cli: Command) -> Command {
+    crate::validate::register_validate_command(cli)
+}
+
+// ---------------------------------------------------------------------------
+// register_discovery_commands (backward-compat wrapper)
 // ---------------------------------------------------------------------------
 
 /// Attach `list` and `describe` subcommands to the given root command.
 ///
+/// **Retained for backward compatibility.** FE-13 integration should use the
+/// per-subcommand registrars ([`register_list_command`],
+/// [`register_describe_command`], [`register_exec_command`],
+/// [`register_validate_command`]) so that include/exclude filtering can be
+/// applied per subcommand. This wrapper preserves the pre-FE-13 call site
+/// shape (root-level `list` + `describe` attachment) for callers that have not
+/// yet migrated.
+///
 /// Returns the root command with the subcommands added. Follows the clap v4
 /// builder idiom (commands are consumed and returned, not mutated in-place).
 pub fn register_discovery_commands(cli: Command, _registry: Arc<dyn RegistryProvider>) -> Command {
-    cli.subcommand(list_command())
-        .subcommand(describe_command())
+    let cli = register_list_command(cli);
+    register_describe_command(cli)
 }
 
 // ---------------------------------------------------------------------------
@@ -889,6 +939,106 @@ mod tests {
         assert!(
             positionals.contains(&"module_id"),
             "describe must have module_id positional, got {positionals:?}"
+        );
+    }
+
+    // --- Per-subcommand registrars (FE-13) ---
+
+    fn find_subcommand<'a>(cmd: &'a Command, name: &str) -> Option<&'a Command> {
+        cmd.get_subcommands().find(|c| c.get_name() == name)
+    }
+
+    #[test]
+    fn test_register_list_command_attaches_list() {
+        let root = Command::new("apcli");
+        let cmd = register_list_command(root);
+        let list = find_subcommand(&cmd, "list").expect("'list' subcommand must be attached");
+        let long_flags: Vec<&str> = list.get_opts().filter_map(|a| a.get_long()).collect();
+        assert!(
+            long_flags.contains(&"tag"),
+            "'list' must expose --tag flag, got {long_flags:?}"
+        );
+    }
+
+    #[test]
+    fn test_register_describe_command_attaches_describe() {
+        let root = Command::new("apcli");
+        let cmd = register_describe_command(root);
+        let describe =
+            find_subcommand(&cmd, "describe").expect("'describe' subcommand must be attached");
+        let positionals: Vec<&str> = describe
+            .get_positionals()
+            .map(|a| a.get_id().as_str())
+            .collect();
+        assert!(
+            positionals.contains(&"module_id"),
+            "'describe' must require module_id positional, got {positionals:?}"
+        );
+        let module_id_arg = describe
+            .get_arguments()
+            .find(|a| a.get_id().as_str() == "module_id")
+            .expect("module_id arg must exist");
+        assert!(
+            module_id_arg.is_required_set(),
+            "'describe' module_id positional must be required"
+        );
+    }
+
+    #[test]
+    fn test_register_exec_command_attaches_exec() {
+        let root = Command::new("apcli");
+        let cmd = register_exec_command(root);
+        let exec = find_subcommand(&cmd, "exec").expect("'exec' subcommand must be attached");
+        let positionals: Vec<&str> = exec
+            .get_positionals()
+            .map(|a| a.get_id().as_str())
+            .collect();
+        assert!(
+            positionals.contains(&"module_id"),
+            "'exec' must require module_id positional, got {positionals:?}"
+        );
+        let module_id_arg = exec
+            .get_arguments()
+            .find(|a| a.get_id().as_str() == "module_id")
+            .expect("module_id arg must exist");
+        assert!(
+            module_id_arg.is_required_set(),
+            "'exec' module_id positional must be required"
+        );
+    }
+
+    #[test]
+    fn test_register_validate_command_attaches_validate() {
+        let root = Command::new("apcli");
+        let cmd = register_validate_command(root);
+        assert!(
+            find_subcommand(&cmd, "validate").is_some(),
+            "'validate' subcommand must be attached"
+        );
+    }
+
+    #[test]
+    fn test_per_subcommand_registrars_can_be_called_independently() {
+        // Attach only `list` to a fresh group; describe/exec/validate must be
+        // absent. Proves registrars are composable without implicit coupling.
+        let root = Command::new("apcli");
+        let cmd = register_list_command(root);
+        let names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(
+            names.contains(&"list"),
+            "'list' must be present, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"describe"),
+            "'describe' must NOT be present when only list was registered, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"exec"),
+            "'exec' must NOT be present when only list was registered, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"validate"),
+            "'validate' must NOT be present when only list was registered, got {names:?}"
         );
     }
 }

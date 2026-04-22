@@ -279,26 +279,25 @@ pub fn exec_command() -> clap::Command {
 }
 
 // ---------------------------------------------------------------------------
-// BUILTIN_COMMANDS — canonical list of always-present subcommands
+// Reserved root-level names (FE-13)
 // ---------------------------------------------------------------------------
-
-/// Built-in command names that are always present regardless of the registry.
-pub const BUILTIN_COMMANDS: &[&str] = &[
-    "completion",
-    "config",
-    "describe",
-    "describe-pipeline",
-    "disable",
-    "enable",
-    "exec",
-    "health",
-    "init",
-    "list",
-    "man",
-    "reload",
-    "usage",
-    "validate",
-];
+//
+// Pre-v0.7, apcore-cli maintained a flat list of built-in command names
+// (`BUILTIN_COMMANDS`) that were reserved against business-module collisions.
+// FE-13 collapses every former built-in under the reserved `apcli` group, so
+// the only collision surface at the root is the `apcli` name itself. See
+// `crate::builtin_group::RESERVED_GROUP_NAMES` for the canonical list.
+//
+// `BUILTIN_COMMANDS` is retained here as a deprecated alias (single-element
+// slice containing "apcli") so downstream code that still imports the symbol
+// from `apcore_cli::BUILTIN_COMMANDS` keeps compiling — the new name will be
+// the only one in v0.8.
+#[deprecated(
+    since = "0.7.0",
+    note = "Use `crate::builtin_group::RESERVED_GROUP_NAMES` instead. FE-13 retires the \
+            pre-v0.7 flat built-in list; only the `apcli` group name is reserved now."
+)]
+pub const BUILTIN_COMMANDS: &[&str] = crate::builtin_group::RESERVED_GROUP_NAMES;
 
 // LazyModuleGroup / GroupedModuleGroup / ModuleExecutor / ApCoreExecutorAdapter
 // were deleted per audit findings D9-001..004. See the module-level comment at
@@ -365,10 +364,10 @@ pub fn build_module_command_with_limit(
     module_def: &apcore::registry::registry::ModuleDescriptor,
     help_text_max_length: usize,
 ) -> Result<clap::Command, CliError> {
-    let module_id = &module_def.name;
+    let module_id = &module_def.module_id;
 
-    // Guard: reject reserved command names immediately.
-    if BUILTIN_COMMANDS.contains(&module_id.as_str()) {
+    // Guard: reject reserved command names immediately (FE-13 §4.10).
+    if crate::builtin_group::RESERVED_GROUP_NAMES.contains(&module_id.as_str()) {
         return Err(CliError::ReservedModuleId(module_id.clone()));
     }
 
@@ -1473,17 +1472,25 @@ mod tests {
     /// `schema` is `None`.
     fn make_module_descriptor(
         name: &str,
-        _description: &str,
+        description: &str,
         schema: Option<serde_json::Value>,
     ) -> apcore::registry::registry::ModuleDescriptor {
         apcore::registry::registry::ModuleDescriptor {
-            name: name.to_string(),
-            annotations: apcore::module::ModuleAnnotations::default(),
+            module_id: name.to_string(),
+            name: None,
+            description: description.to_string(),
+            documentation: None,
             input_schema: schema.unwrap_or(serde_json::Value::Null),
             output_schema: serde_json::Value::Object(Default::default()),
-            enabled: true,
+            version: "1.0.0".to_string(),
             tags: vec![],
+            annotations: Some(apcore::module::ModuleAnnotations::default()),
+            examples: vec![],
+            metadata: std::collections::HashMap::new(),
+            display: None,
+            sunset_date: None,
             dependencies: vec![],
+            enabled: true,
         }
     }
 
@@ -1539,12 +1546,29 @@ mod tests {
 
     #[test]
     fn test_build_module_command_reserved_name_returns_error() {
-        for reserved in BUILTIN_COMMANDS {
+        // FE-13: only the `apcli` group name is reserved now. Former built-ins
+        // (`list`, `describe`, etc.) live under the apcli group and no longer
+        // collide at the root.
+        for reserved in crate::builtin_group::RESERVED_GROUP_NAMES {
             let module = make_module_descriptor(reserved, "desc", None);
             let result = build_module_command(&module);
             assert!(
                 matches!(result, Err(CliError::ReservedModuleId(_))),
                 "expected ReservedModuleId for '{reserved}', got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_module_command_former_builtin_names_allowed() {
+        // Regression guard: `list`, `describe`, `health` etc. used to be
+        // reserved; FE-13 retires that list. They must build cleanly now.
+        for name in &["list", "describe", "exec", "init", "health", "config"] {
+            let module = make_module_descriptor(name, "desc", None);
+            let result = build_module_command(&module);
+            assert!(
+                result.is_ok(),
+                "former built-in '{name}' should no longer be reserved; got {result:?}"
             );
         }
     }
@@ -1561,41 +1585,35 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // BUILTIN_COMMANDS invariants
+    // Reserved name invariants (FE-13)
     // ---------------------------------------------------------------------------
 
     #[test]
-    fn test_builtin_commands_sorted() {
-        // BUILTIN_COMMANDS slice must itself be in sorted order (single source of truth).
-        let mut sorted = BUILTIN_COMMANDS.to_vec();
-        sorted.sort_unstable();
-        assert_eq!(
-            BUILTIN_COMMANDS,
-            sorted.as_slice(),
-            "BUILTIN_COMMANDS must be sorted alphabetically"
-        );
+    fn test_reserved_group_names_single_entry() {
+        // FE-13: all former built-ins now live under `apcli`, so the only
+        // reserved root-level name is `apcli` itself.
+        assert_eq!(crate::builtin_group::RESERVED_GROUP_NAMES, &["apcli"]);
     }
 
     #[test]
-    fn test_builtin_commands_canonical_set() {
-        // The canonical 14-command set per audit B-003.
+    fn test_apcli_subcommand_names_matches_spec() {
+        // Spec §4.1 subcommand table — 13 entries registered under `apcli`.
         let expected: &[&str] = &[
-            "completion",
-            "config",
-            "describe",
-            "describe-pipeline",
-            "disable",
-            "enable",
-            "exec",
-            "health",
-            "init",
             "list",
-            "man",
-            "reload",
-            "usage",
+            "describe",
+            "exec",
             "validate",
+            "init",
+            "health",
+            "usage",
+            "enable",
+            "disable",
+            "reload",
+            "config",
+            "completion",
+            "describe-pipeline",
         ];
-        assert_eq!(BUILTIN_COMMANDS, expected);
+        assert_eq!(crate::builtin_group::APCLI_SUBCOMMAND_NAMES, expected);
     }
 
     // ---------------------------------------------------------------------------

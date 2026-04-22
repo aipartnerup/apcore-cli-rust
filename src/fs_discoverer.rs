@@ -4,12 +4,57 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use apcore::errors::ModuleError;
-use apcore::module::ModuleAnnotations;
+use apcore::context::Context;
+use apcore::errors::{ErrorCode, ModuleError};
+use apcore::module::{Module, ModuleAnnotations};
 use apcore::registry::registry::{DiscoveredModule, Discoverer, ModuleDescriptor};
+
+/// Placeholder `Module` carried in `DiscoveredModule.module` for subprocess-based
+/// modules discovered on the filesystem. It holds the module's schemas so the
+/// registry can report them for validation and description, but `execute()`
+/// intentionally fails — actual invocation goes through the subprocess dispatch
+/// path in `main.rs` which resolves the executable via
+/// [`FsDiscoverer::executables_snapshot`].
+struct SubprocessPlaceholderModule {
+    module_id: String,
+    input_schema: serde_json::Value,
+    output_schema: serde_json::Value,
+    description: String,
+}
+
+#[async_trait]
+impl Module for SubprocessPlaceholderModule {
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        self.input_schema.clone()
+    }
+
+    fn output_schema(&self) -> serde_json::Value {
+        self.output_schema.clone()
+    }
+
+    async fn execute(
+        &self,
+        _inputs: serde_json::Value,
+        _ctx: &Context<serde_json::Value>,
+    ) -> Result<serde_json::Value, ModuleError> {
+        Err(ModuleError::new(
+            ErrorCode::ModuleExecuteError,
+            format!(
+                "Module '{}' is a subprocess module; in-process execute() is \
+                 unsupported. Invoke via the CLI subprocess dispatcher.",
+                self.module_id
+            ),
+        ))
+    }
+}
 
 /// Intermediate struct for deserializing module.json files.
 ///
@@ -19,7 +64,6 @@ use apcore::registry::registry::{DiscoveredModule, Discoverer, ModuleDescriptor}
 struct ModuleJson {
     name: String,
     #[serde(default)]
-    #[allow(dead_code)]
     description: String,
     #[serde(default)]
     tags: Vec<String>,
@@ -159,20 +203,37 @@ impl Discoverer for FsDiscoverer {
                 }
             }
 
+            let module_id = mj.name.clone();
             let descriptor = ModuleDescriptor {
-                name: mj.name.clone(),
-                annotations: ModuleAnnotations::default(),
-                input_schema: mj.input_schema,
-                output_schema: mj.output_schema,
-                enabled: true,
+                module_id: module_id.clone(),
+                name: None,
+                description: mj.description.clone(),
+                documentation: None,
+                input_schema: mj.input_schema.clone(),
+                output_schema: mj.output_schema.clone(),
+                version: "1.0.0".to_string(),
                 tags: mj.tags,
+                annotations: Some(ModuleAnnotations::default()),
+                examples: vec![],
+                metadata: HashMap::new(),
+                display: None,
+                sunset_date: None,
                 dependencies: vec![],
+                enabled: true,
             };
 
+            let module: Arc<dyn Module> = Arc::new(SubprocessPlaceholderModule {
+                module_id: module_id.clone(),
+                input_schema: mj.input_schema,
+                output_schema: mj.output_schema,
+                description: mj.description,
+            });
+
             modules.push(DiscoveredModule {
-                name: mj.name,
+                name: module_id,
                 source: path.display().to_string(),
                 descriptor,
+                module,
             });
         }
 
@@ -273,7 +334,7 @@ mod tests {
 
         let m = &modules[0];
         assert_eq!(m.name, "test.mod");
-        assert_eq!(m.descriptor.name, "test.mod");
+        assert_eq!(m.descriptor.module_id, "test.mod");
         assert!(m.descriptor.enabled);
         assert_eq!(m.descriptor.tags, vec!["demo", "test"]);
         assert!(m.descriptor.dependencies.is_empty());

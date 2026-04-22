@@ -8,6 +8,7 @@
 //! See the apcore-cli docs repo for the authoritative feature spec and tech design.
 
 pub mod approval;
+pub mod builtin_group;
 pub mod cli;
 pub mod config;
 pub mod discovery;
@@ -120,6 +121,9 @@ pub struct CliConfig {
     /// Module exposure filter (FE-12). When set, the CLI builder will apply
     /// this filter at dispatch time when constructing the module command tree.
     pub expose: Option<exposure::ExposureFilter>,
+    /// Built-in apcli group configuration (FE-13). When `None`, visibility
+    /// falls through to `apcore.yaml` (Tier 3) and auto-detect (Tier 4).
+    pub apcli: Option<ApcliConfig>,
 }
 
 impl CliConfig {
@@ -196,6 +200,76 @@ pub async fn run_with_config(config: CliConfig, _args: Vec<String>) -> i32 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// FE-13 apcli subcommand dispatcher (§4.9)
+// ---------------------------------------------------------------------------
+
+/// Subcommand names that are registered regardless of the resolved visibility
+/// mode's include/exclude filter. `exec` is the documented always-registered
+/// escape hatch (spec §4.9) so downstream callers can always invoke modules
+/// by ID even when the apcli group is configured with a minimal surface.
+pub const APCLI_ALWAYS_REGISTERED: &[&str] = &["exec"];
+
+/// Central dispatcher for the 13 canonical apcli subcommands. Walks a fixed
+/// registration table and honors [`ApcliGroup::resolve_visibility`] for
+/// include/exclude modes. Under `"all"` or `"none"` all 13 subcommands are
+/// registered (spec §4.9 registration rules table); under `"include"` only
+/// listed subcommands + [`APCLI_ALWAYS_REGISTERED`]; under `"exclude"` all
+/// except listed + [`APCLI_ALWAYS_REGISTERED`].
+///
+/// * `apcli_group` — the `apcli` clap [`Command`](clap::Command) to receive
+///   subcommands.
+/// * `cfg` — the resolved apcli visibility configuration.
+/// * `prog_name` — program name forwarded to `register_completion_command`.
+///
+/// Returns the updated command with registered subcommands attached.
+pub fn register_apcli_subcommands(
+    apcli_group: clap::Command,
+    cfg: &ApcliGroup,
+    prog_name: &str,
+) -> clap::Command {
+    type Registrar = Box<dyn FnOnce(clap::Command) -> clap::Command>;
+
+    let prog_name_for_completion = prog_name.to_string();
+    let table: Vec<(&'static str, Registrar)> = vec![
+        ("list", Box::new(discovery::register_list_command)),
+        ("describe", Box::new(discovery::register_describe_command)),
+        ("exec", Box::new(discovery::register_exec_command)),
+        ("validate", Box::new(discovery::register_validate_command)),
+        ("init", Box::new(init_cmd::register_init_command)),
+        ("health", Box::new(system_cmd::register_health_command)),
+        ("usage", Box::new(system_cmd::register_usage_command)),
+        ("enable", Box::new(system_cmd::register_enable_command)),
+        ("disable", Box::new(system_cmd::register_disable_command)),
+        ("reload", Box::new(system_cmd::register_reload_command)),
+        ("config", Box::new(system_cmd::register_config_command)),
+        (
+            "completion",
+            Box::new(move |cli| shell::register_completion_command(cli, &prog_name_for_completion)),
+        ),
+        (
+            "describe-pipeline",
+            Box::new(strategy::register_pipeline_command),
+        ),
+    ];
+
+    let mode = cfg.resolve_visibility();
+    let mut cmd = apcli_group;
+    for (name, registrar) in table {
+        let should_register = match mode {
+            // mode:"none" still registers all subcommands — the group itself
+            // is hidden but subcommands remain individually reachable
+            // (spec §4.6 / §4.9 hidden-but-reachable).
+            "all" | "none" => true,
+            _ => APCLI_ALWAYS_REGISTERED.contains(&name) || cfg.is_subcommand_included(name),
+        };
+        if should_register {
+            cmd = registrar(cmd);
+        }
+    }
+    cmd
+}
+
 impl Default for CliConfig {
     fn default() -> Self {
         Self {
@@ -209,6 +283,7 @@ impl Default for CliConfig {
             extra_commands: Vec::new(),
             group_depth: 1,
             expose: None,
+            apcli: None,
         }
     }
 }
@@ -229,12 +304,20 @@ impl Default for CliConfig {
 // Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{check_approval, ApprovalError};
 
+// Built-in command group (FE-13)
+pub use builtin_group::{ApcliConfig, ApcliGroup, ApcliMode};
+
 // Core dispatcher (FE-01)
 pub use cli::{
     build_module_command, build_module_command_with_limit, collect_input,
     collect_input_from_reader, dispatch_module, get_docs_url, is_verbose_help, set_audit_logger,
-    set_docs_url, set_executables, set_verbose_help, validate_module_id, BUILTIN_COMMANDS,
+    set_docs_url, set_executables, set_verbose_help, validate_module_id,
 };
+
+// FE-13 retires `cli::BUILTIN_COMMANDS`. Downstream consumers that pinned to
+// the old symbol continue to compile via the deprecated alias on `cli::` for
+// one MINOR cycle; the re-export at the crate root is dropped.
+pub use builtin_group::{APCLI_SUBCOMMAND_NAMES, RESERVED_GROUP_NAMES};
 
 // Config resolution (FE-07)
 pub use config::ConfigResolver;
@@ -310,6 +393,13 @@ mod tests {
         assert!(config.extra_commands.is_empty());
         assert_eq!(config.group_depth, 1);
         assert!(config.expose.is_none());
+        assert!(config.apcli.is_none());
+    }
+
+    #[test]
+    fn cli_config_default_apcli_is_none() {
+        let config = CliConfig::default();
+        assert!(config.apcli.is_none());
     }
 
     #[test]

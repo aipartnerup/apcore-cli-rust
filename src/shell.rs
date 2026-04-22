@@ -20,15 +20,30 @@ pub enum ShellError {
 // KNOWN_BUILTINS
 // ---------------------------------------------------------------------------
 
-/// The fixed set of built-in CLI command names.
+/// Command names that `cmd_man` accepts as a man-page fallback when the name
+/// is not yet wired into the live clap subcommand tree.
 ///
-/// `cmd_man` consults this list when the requested command name is not found
-/// among the live clap subcommands, so that built-in commands that have not
-/// yet been wired still produce a man page stub rather than an "unknown
-/// command" error.
-///
-/// This is a re-export of `cli::BUILTIN_COMMANDS` — single source of truth.
-pub const KNOWN_BUILTINS: &[&str] = crate::cli::BUILTIN_COMMANDS;
+/// FE-13: after the `apcli` group restructure, the 13 former root-level
+/// built-ins live under `apcli` (e.g. `apcli list`). This constant retains
+/// the flat names for the v0.7 deprecation window so legacy invocations like
+/// `apcore-cli man list` still render useful output. Keep the set in sync
+/// with the spec §4.1 subcommand table plus the root-level `man` meta.
+pub const KNOWN_BUILTINS: &[&str] = &[
+    "completion",
+    "config",
+    "describe",
+    "describe-pipeline",
+    "disable",
+    "enable",
+    "exec",
+    "health",
+    "init",
+    "list",
+    "man",
+    "reload",
+    "usage",
+    "validate",
+];
 
 // ---------------------------------------------------------------------------
 // register_shell_commands
@@ -37,13 +52,36 @@ pub const KNOWN_BUILTINS: &[&str] = crate::cli::BUILTIN_COMMANDS;
 /// Attach the `completion` and `man` subcommands to the given root command and
 /// return it. Uses the clap v4 builder idiom (consume + return).
 ///
+/// **Retained for backward compatibility.** FE-13 integration should use the
+/// per-subcommand registrars ([`register_completion_command`] and
+/// [`register_man_command`]) so include/exclude filtering can be applied
+/// per subcommand. Note that under FE-13 only `completion` moves under the
+/// `apcli` group; `man` is a root-level meta command (not in the FE-13
+/// subcommand table per spec §4.1).
+///
 /// * `completion <shell>` — emit shell completion script to stdout
 ///   Supported shells: `bash`, `zsh`, `fish`, `powershell`, `elvish`
 /// * `man`                — emit a man page to stdout
 pub fn register_shell_commands(cli: Command, prog_name: &str) -> Command {
+    let cli = register_completion_command(cli, prog_name);
+    register_man_command(cli)
+}
+
+/// Attach the `completion` subcommand to the given command. Returns the
+/// command with the subcommand added. `prog_name` is accepted for API
+/// symmetry and future dynamic use; the builder itself is currently static.
+pub fn register_completion_command(cli: Command, prog_name: &str) -> Command {
     let _ = prog_name; // prog_name reserved for future dynamic use
     cli.subcommand(completion_command())
-        .subcommand(man_command())
+}
+
+/// Attach the `man` subcommand to the given command. Returns the command
+/// with the subcommand added.
+///
+/// `man` is a root-level meta command under FE-13 and is NOT part of the
+/// `apcli` built-in group (see spec §4.1).
+pub fn register_man_command(cli: Command) -> Command {
+    cli.subcommand(man_command())
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,6 +1280,36 @@ mod tests {
         assert!(
             !values.contains(&"invalid_shell"),
             "invalid_shell must not be accepted"
+        );
+    }
+
+    // --- Per-subcommand registrars (FE-13) ---
+
+    #[test]
+    fn test_register_completion_command_attaches_completion() {
+        let root = register_completion_command(Command::new("root"), "apcore-cli");
+        let names: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(
+            names.contains(&"completion"),
+            "must have 'completion' subcommand, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"man"),
+            "man must be absent when only completion registrar called"
+        );
+    }
+
+    #[test]
+    fn test_register_man_command_attaches_man() {
+        let root = register_man_command(Command::new("root"));
+        let names: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
+        assert!(
+            names.contains(&"man"),
+            "must have 'man' subcommand, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"completion"),
+            "completion must be absent when only man registrar called"
         );
     }
 }
