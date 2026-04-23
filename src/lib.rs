@@ -28,7 +28,7 @@ pub mod validate;
 // Internal sandbox runner — not part of the public API surface, but must be
 // pub so the binary entry point (main.rs) can invoke run_sandbox_subprocess().
 #[doc(hidden)]
-pub mod _sandbox_runner;
+pub mod sandbox_runner;
 
 // Exit codes as defined in the API contract.
 pub const EXIT_SUCCESS: i32 = 0;

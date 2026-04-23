@@ -547,7 +547,7 @@ async fn main() {
     // This must happen first so clap does not reject the unknown flag.
     let raw_args: Vec<String> = std::env::args().collect();
     if raw_args.get(1).map(String::as_str) == Some("--internal-sandbox-runner") {
-        if let Err(e) = apcore_cli::_sandbox_runner::run_sandbox_subprocess().await {
+        if let Err(e) = apcore_cli::sandbox_runner::run_sandbox_subprocess().await {
             eprintln!("{e}");
             std::process::exit(1);
         }

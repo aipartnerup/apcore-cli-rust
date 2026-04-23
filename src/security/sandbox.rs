@@ -45,7 +45,7 @@ pub enum ModuleExecutionError {
 /// Executes modules in an isolated subprocess for security isolation.
 ///
 /// When `enabled` is `false`, execution is performed in-process (no sandbox).
-/// When `enabled` is `true`, a child process running `_sandbox_runner` handles
+/// When `enabled` is `true`, a child process running `sandbox_runner` handles
 /// the execution and communicates results via JSON over stdin/stdout.
 pub struct Sandbox {
     enabled: bool,
@@ -88,7 +88,7 @@ impl Sandbox {
     /// need to branch on the `--sandbox` flag at every call site.
     ///
     /// When `enabled` is `true`, runs `module_id` in an isolated subprocess
-    /// via `_sandbox_runner` and returns the parsed JSON output. The executor
+    /// via `sandbox_runner` and returns the parsed JSON output. The executor
     /// argument is intentionally unused in this branch — the subprocess loads
     /// its own apcore environment from the inherited `APCORE_*` env vars.
     pub async fn execute(
@@ -194,7 +194,7 @@ impl Sandbox {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        crate::_sandbox_runner::decode_result(&stdout).map_err(|e| {
+        crate::sandbox_runner::decode_result(&stdout).map_err(|e| {
             ModuleExecutionError::OutputParseFailed {
                 module_id: module_id.to_string(),
                 reason: e.to_string(),
@@ -247,20 +247,20 @@ mod tests {
 
     #[test]
     fn test_decode_result_valid_json() {
-        use crate::_sandbox_runner::decode_result;
+        use crate::sandbox_runner::decode_result;
         let v = decode_result(r#"{"ok":true}"#).unwrap();
         assert_eq!(v["ok"], true);
     }
 
     #[test]
     fn test_decode_result_invalid_json() {
-        use crate::_sandbox_runner::decode_result;
+        use crate::sandbox_runner::decode_result;
         assert!(decode_result("not json").is_err());
     }
 
     #[test]
     fn test_encode_result_roundtrip() {
-        use crate::_sandbox_runner::{decode_result, encode_result};
+        use crate::sandbox_runner::{decode_result, encode_result};
         let v = json!({"result": 42});
         let encoded = encode_result(&v);
         let decoded = decode_result(&encoded).unwrap();
