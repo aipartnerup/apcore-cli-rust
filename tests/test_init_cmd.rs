@@ -90,13 +90,15 @@ fn test_binding_style_creates_yaml() {
         "YAML must contain module id"
     );
 
-    // Companion Rust file is created at commands/text.rs
-    // (relative to CWD).
-    let rs_file = std::path::Path::new("commands").join("text.rs");
-    assert!(rs_file.exists(), "companion Rust file must be created");
-    // Clean up the companion file.
-    let _ = fs::remove_file(&rs_file);
-    let _ = fs::remove_dir("commands");
+    // Companion Rust file lives in a sibling `commands/` dir of `--dir`,
+    // so passing `--dir <tmp>/bindings` puts the companion in
+    // `<tmp>/commands/text.rs` rather than leaking it to the CWD.
+    let rs_file = tmp.path().join("commands").join("text.rs");
+    assert!(
+        rs_file.exists(),
+        "companion Rust file must live next to bindings dir, got missing {}",
+        rs_file.display()
+    );
 }
 
 #[test]
@@ -124,6 +126,56 @@ fn test_convention_dotted_id_has_cli_group() {
     assert!(
         content.contains("pub const CLI_GROUP: &str = \"math\""),
         "dotted module_id must produce CLI_GROUP"
+    );
+}
+
+#[test]
+fn test_force_flag_in_command_definition() {
+    // Regression for review #4: --force / -f must be exposed on `init module`
+    // so callers can opt into overwriting an existing scaffold.
+    let cmd = apcore_cli::init_cmd::init_command();
+    let module_cmd = cmd
+        .get_subcommands()
+        .find(|c| c.get_name() == "module")
+        .expect("module subcommand");
+    let force = module_cmd
+        .get_arguments()
+        .find(|a| a.get_id() == "force")
+        .expect("must expose --force flag");
+    assert_eq!(force.get_short(), Some('f'));
+}
+
+#[test]
+fn test_force_overwrites_existing_companion() {
+    // Regression for review #4 happy path: --force replaces the companion
+    // .rs even when one already exists.
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().join("bindings");
+    let dir_str = dir.to_str().unwrap();
+
+    let companion = tmp.path().join("commands").join("greeting.rs");
+    fs::create_dir_all(companion.parent().unwrap()).unwrap();
+    fs::write(&companion, "// pre-existing user code").unwrap();
+
+    let cmd = apcore_cli::init_cmd::init_command();
+    let matches = cmd
+        .try_get_matches_from(vec![
+            "init",
+            "module",
+            "greeting.hello",
+            "--style",
+            "binding",
+            "--dir",
+            dir_str,
+            "--force",
+        ])
+        .unwrap();
+    apcore_cli::init_cmd::handle_init(&matches);
+
+    let after = fs::read_to_string(&companion).unwrap();
+    assert!(
+        after.contains("pub fn hello("),
+        "--force must replace the existing companion, got: {after}"
     );
 }
 

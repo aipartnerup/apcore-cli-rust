@@ -24,6 +24,13 @@ pub fn init_command() -> clap::Command {
                         .long("description")
                         .short('d')
                         .default_value("TODO: add description"),
+                )
+                .arg(
+                    clap::Arg::new("force")
+                        .long("force")
+                        .short('f')
+                        .help("Overwrite existing scaffold files")
+                        .action(clap::ArgAction::SetTrue),
                 ),
         )
 }
@@ -45,6 +52,7 @@ pub fn handle_init(matches: &clap::ArgMatches) {
         let module_id = sub_m.get_one::<String>("module_id").unwrap();
         let style = sub_m.get_one::<String>("style").unwrap();
         let description = sub_m.get_one::<String>("description").unwrap();
+        let force = sub_m.get_flag("force");
 
         // Parse module_id: split on last dot for prefix/func_name.
         let (prefix, func_name) = match module_id.rfind('.') {
@@ -59,7 +67,7 @@ pub fn handle_init(matches: &clap::ArgMatches) {
                     .map(|s| s.as_str())
                     .unwrap_or("extensions");
                 validate_dir(dir);
-                create_decorator_module(module_id, func_name, description, dir);
+                create_decorator_module(module_id, func_name, description, dir, force);
             }
             "convention" => {
                 let dir = sub_m
@@ -67,7 +75,7 @@ pub fn handle_init(matches: &clap::ArgMatches) {
                     .map(|s| s.as_str())
                     .unwrap_or("commands");
                 validate_dir(dir);
-                create_convention_module(module_id, prefix, func_name, description, dir);
+                create_convention_module(module_id, prefix, func_name, description, dir, force);
             }
             "binding" => {
                 let dir = sub_m
@@ -75,10 +83,22 @@ pub fn handle_init(matches: &clap::ArgMatches) {
                     .map(|s| s.as_str())
                     .unwrap_or("bindings");
                 validate_dir(dir);
-                create_binding_module(module_id, prefix, func_name, description, dir);
+                create_binding_module(module_id, prefix, func_name, description, dir, force);
             }
             _ => unreachable!(),
         }
+    }
+}
+
+/// Refuse to overwrite an existing scaffold file unless `--force` was passed.
+/// Exits with code 2 on conflict so CI and shell pipelines can detect it.
+fn guard_overwrite(filepath: &Path, force: bool) {
+    if !force && filepath.exists() {
+        eprintln!(
+            "Error: '{}' already exists. Pass --force to overwrite.",
+            filepath.display()
+        );
+        std::process::exit(2);
     }
 }
 
@@ -113,7 +133,13 @@ fn to_struct_name(func_name: &str) -> String {
 }
 
 /// Create a decorator-style module (Rust file with Module trait).
-fn create_decorator_module(module_id: &str, func_name: &str, description: &str, dir: &str) {
+fn create_decorator_module(
+    module_id: &str,
+    func_name: &str,
+    description: &str,
+    dir: &str,
+    force: bool,
+) {
     let dir_path = Path::new(dir);
     fs::create_dir_all(dir_path).unwrap_or_else(|e| {
         eprintln!(
@@ -173,6 +199,7 @@ fn create_decorator_module(module_id: &str, func_name: &str, description: &str, 
         i = "    ",
     );
 
+    guard_overwrite(&filepath, force);
     fs::write(&filepath, content).unwrap_or_else(|e| {
         eprintln!("Error: cannot write '{}': {e}", filepath.display());
         std::process::exit(2);
@@ -189,6 +216,7 @@ fn create_convention_module(
     func_name: &str,
     description: &str,
     dir: &str,
+    force: bool,
 ) {
     // Build the file path: prefix parts become subdirectories.
     // e.g. module_id "ops.deploy" with dir "commands"
@@ -235,6 +263,7 @@ fn create_convention_module(
         i = "    ",
     );
 
+    guard_overwrite(&filepath, force);
     fs::write(&filepath, content).unwrap_or_else(|e| {
         eprintln!("Error: cannot write '{}': {e}", filepath.display());
         std::process::exit(2);
@@ -251,6 +280,7 @@ fn create_binding_module(
     func_name: &str,
     description: &str,
     dir: &str,
+    force: bool,
 ) {
     let dir_path = Path::new(dir);
     fs::create_dir_all(dir_path).unwrap_or_else(|e| {
@@ -278,6 +308,7 @@ fn create_binding_module(
         i = "  ",
     );
 
+    guard_overwrite(&yaml_filepath, force);
     fs::write(&yaml_filepath, yaml_content).unwrap_or_else(|e| {
         eprintln!("Error: cannot write '{}': {e}", yaml_filepath.display());
         std::process::exit(2);
@@ -285,38 +316,50 @@ fn create_binding_module(
 
     println!("Created {}", yaml_filepath.display());
 
-    // Write companion Rust file to
-    // commands/{prefix_with_dots_as_underscores}.rs
+    // Companion Rust file: place it in a `commands/` directory that is a
+    // sibling of `dir_path`, so a user passing `--dir my/bindings` gets
+    // their companion at `my/commands/...` instead of leaking it to the
+    // CWD's `./commands/`. When `dir_path` has no parent (e.g. the default
+    // `bindings`), fall back to `./commands` to preserve behavior.
+    let commands_dir = dir_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.join("commands"))
+        .unwrap_or_else(|| Path::new("commands").to_path_buf());
     let rs_filename = format!("{prefix_underscored}.rs");
-    let rs_filepath = Path::new("commands").join(&rs_filename);
+    let rs_filepath = commands_dir.join(&rs_filename);
 
-    // Only create if it does not already exist.
-    if !rs_filepath.exists() {
-        if let Some(parent) = rs_filepath.parent() {
-            fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("Error: cannot create directory '{}': {e}", parent.display());
-                std::process::exit(2);
-            });
-        }
+    // The companion file is only seeded once per prefix (multiple bindings
+    // can share the same Rust function module); leave existing user code
+    // alone unless --force was passed.
+    if rs_filepath.exists() && !force {
+        return;
+    }
 
-        let rs_content = format!(
-            "use serde_json::{{json, Value}};\n\
-             \n\
-             /// {description}\n\
-             pub fn {func_name}() -> Value {{\n\
-             {i}// TODO: implement\n\
-             {i}json!({{ \"status\": \"ok\" }})\n\
-             }}\n",
-            i = "    ",
-        );
-
-        fs::write(&rs_filepath, rs_content).unwrap_or_else(|e| {
-            eprintln!("Error: cannot write '{}': {e}", rs_filepath.display());
+    if let Some(parent) = rs_filepath.parent() {
+        fs::create_dir_all(parent).unwrap_or_else(|e| {
+            eprintln!("Error: cannot create directory '{}': {e}", parent.display());
             std::process::exit(2);
         });
-
-        println!("Created {}", rs_filepath.display());
     }
+
+    let rs_content = format!(
+        "use serde_json::{{json, Value}};\n\
+         \n\
+         /// {description}\n\
+         pub fn {func_name}() -> Value {{\n\
+         {i}// TODO: implement\n\
+         {i}json!({{ \"status\": \"ok\" }})\n\
+         }}\n",
+        i = "    ",
+    );
+
+    fs::write(&rs_filepath, rs_content).unwrap_or_else(|e| {
+        eprintln!("Error: cannot write '{}': {e}", rs_filepath.display());
+        std::process::exit(2);
+    });
+
+    println!("Created {}", rs_filepath.display());
 }
 
 // -------------------------------------------------------------------
