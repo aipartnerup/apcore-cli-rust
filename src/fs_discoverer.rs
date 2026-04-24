@@ -163,19 +163,34 @@ impl Discoverer for FsDiscoverer {
         let mut modules = Vec::new();
 
         for path in paths {
-            let content = std::fs::read_to_string(&path).map_err(|e| {
-                ModuleError::new(
-                    apcore::errors::ErrorCode::ModuleLoadError,
-                    format!("Failed to read {}: {}", path.display(), e),
-                )
-            })?;
+            // Skip a single unreadable / malformed module.json with a warning
+            // rather than aborting the whole pass — the sibling
+            // load_descriptions() already tolerates the same failures, and
+            // dropping every later module on the floor because of one typo
+            // produces a confusing "registry shrink" symptom for users.
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to read module.json '{}': {} — skipping",
+                        path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
 
-            let mj: ModuleJson = serde_json::from_str(&content).map_err(|e| {
-                ModuleError::new(
-                    apcore::errors::ErrorCode::ModuleLoadError,
-                    format!("Failed to parse {}: {}", path.display(), e),
-                )
-            })?;
+            let mj: ModuleJson = match serde_json::from_str(&content) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse module.json '{}': {} — skipping",
+                        path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
 
             // Resolve executable path relative to module.json directory.
             // Security: validate the resolved path stays within the extensions root.
@@ -189,8 +204,16 @@ impl Discoverer for FsDiscoverer {
                             _ => false,
                         };
                         if safe {
-                            if let Ok(mut map) = self.executables.lock() {
-                                map.insert(mj.name.clone(), exec_path);
+                            match self.executables.lock() {
+                                Ok(mut map) => {
+                                    map.insert(mj.name.clone(), exec_path);
+                                }
+                                Err(_poisoned) => {
+                                    tracing::warn!(
+                                        "Executables mutex poisoned during discover() — '{}' not registered",
+                                        mj.name
+                                    );
+                                }
                             }
                         } else {
                             tracing::warn!(
@@ -307,15 +330,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_discover_invalid_json_returns_error() {
+    async fn test_discover_invalid_json_is_skipped_not_aborting() {
+        // Per review #14: a malformed module.json must produce a tracing
+        // warning and be skipped, not abort the whole discovery pass.
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("bad");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("module.json"), "not valid json").unwrap();
+        let bad = tmp.path().join("bad");
+        fs::create_dir_all(&bad).unwrap();
+        fs::write(bad.join("module.json"), "not valid json").unwrap();
+        write_module_json(
+            &tmp.path().join("good"),
+            "good.mod",
+            "still loads",
+            &["demo"],
+        );
 
         let discoverer = FsDiscoverer::new(tmp.path());
-        let result = discoverer.discover(&[]).await;
-        assert!(result.is_err());
+        let modules = discoverer
+            .discover(&[])
+            .await
+            .expect("malformed sibling must not abort the pass");
+        let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            names.contains(&"good.mod"),
+            "well-formed module must still load alongside malformed sibling, got {names:?}"
+        );
     }
 
     #[tokio::test]
