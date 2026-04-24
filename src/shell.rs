@@ -45,6 +45,30 @@ pub const KNOWN_BUILTINS: &[&str] = &[
     "validate",
 ];
 
+/// `(name, description)` pairs for every entry in `KNOWN_BUILTINS`. Single
+/// source of truth for shell completion scripts — drives the bash, zsh, and
+/// fish generators so adding a new built-in doesn't need touching three
+/// hand-maintained lists (review #3).
+pub const KNOWN_BUILTIN_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("completion", "Generate shell completion script"),
+    ("config", "Read or update runtime configuration"),
+    ("describe", "Show module metadata and schema"),
+    (
+        "describe-pipeline",
+        "Describe the execution pipeline for a strategy",
+    ),
+    ("disable", "Disable a module at runtime"),
+    ("enable", "Enable a module at runtime"),
+    ("exec", "Execute an apcore module"),
+    ("health", "Show module or registry health status"),
+    ("init", "Scaffolding commands"),
+    ("list", "List available modules"),
+    ("man", "Generate man page"),
+    ("reload", "Reload a module's definition"),
+    ("usage", "Show module usage counters"),
+    ("validate", "Validate a module's input against its schema"),
+];
+
 // ---------------------------------------------------------------------------
 // register_shell_commands
 // ---------------------------------------------------------------------------
@@ -218,6 +242,9 @@ pub fn generate_grouped_bash_completion(prog_name: &str) -> String {
     let ml = module_list_cmd(&quoted);
     let gt = groups_and_top_cmd(&quoted);
     let gc = group_cmds_cmd(&quoted);
+    // Drive the builtins list from KNOWN_BUILTINS so adding a new built-in
+    // doesn't require touching the bash/zsh/fish generators (review #3).
+    let builtins = KNOWN_BUILTINS.join(" ");
 
     format!(
         "{fn_name}() {{\n\
@@ -228,7 +255,7 @@ pub fn generate_grouped_bash_completion(prog_name: &str) -> String {
          \n\
          \x20   if [[ ${{COMP_CWORD}} -eq 1 ]]; then\n\
          \x20       local all_ids=$({gt})\n\
-         \x20       local builtins=\"completion describe exec init list man\"\n\
+         \x20       local builtins=\"{builtins}\"\n\
          \x20       COMPREPLY=( $(compgen -W \
          \"${{builtins}} ${{all_ids}}\" -- ${{cur}}) )\n\
          \x20       return 0\n\
@@ -266,18 +293,20 @@ pub fn generate_grouped_zsh_completion(prog_name: &str) -> String {
     let gt = groups_and_top_cmd(&quoted);
     let gc = group_cmds_cmd(&quoted);
 
+    // Drive the (name:description) array from KNOWN_BUILTIN_DESCRIPTIONS
+    // so adding a new built-in stays a one-line edit (review #3).
+    let zsh_commands = KNOWN_BUILTIN_DESCRIPTIONS
+        .iter()
+        .map(|(name, desc)| format!("        '{name}:{desc}'\n"))
+        .collect::<String>();
+
     format!(
         "#compdef {prog_name}\n\
          \n\
          {fn_name}() {{\n\
          \x20   local -a commands groups_and_top\n\
          \x20   commands=(\n\
-         \x20       'exec:Execute an apcore module'\n\
-         \x20       'list:List available modules'\n\
-         \x20       'describe:Show module metadata and schema'\n\
-         \x20       'completion:Generate shell completion script'\n\
-         \x20       'init:Scaffolding commands'\n\
-         \x20       'man:Generate man page'\n\
+         {zsh_commands}\
          \x20   )\n\
          \n\
          \x20   _arguments -C \\\n\
@@ -325,23 +354,21 @@ pub fn generate_grouped_fish_completion(prog_name: &str) -> String {
     let gt_fish = groups_and_top_cmd_fish(&quoted);
     let gc_fish_fn = group_cmds_fish_fn(&quoted);
 
+    // Drive the per-builtin completion lines from KNOWN_BUILTIN_DESCRIPTIONS
+    // so adding a new built-in stays a one-line edit (review #3).
+    let fish_builtins = KNOWN_BUILTIN_DESCRIPTIONS
+        .iter()
+        .map(|(name, desc)| {
+            format!("complete -c {quoted} -n \"__fish_use_subcommand\" -a {name} -d \"{desc}\"\n")
+        })
+        .collect::<String>();
+
     format!(
         "# Fish completions for {prog_name}\n\
          \n\
          {gc_fish_fn}\
          \n\
-         complete -c {quoted} -n \"__fish_use_subcommand\" \
-         -a exec -d \"Execute an apcore module\"\n\
-         complete -c {quoted} -n \"__fish_use_subcommand\" \
-         -a list -d \"List available modules\"\n\
-         complete -c {quoted} -n \"__fish_use_subcommand\" \
-         -a describe -d \"Show module metadata and schema\"\n\
-         complete -c {quoted} -n \"__fish_use_subcommand\" \
-         -a completion -d \"Generate shell completion script\"\n\
-         complete -c {quoted} -n \"__fish_use_subcommand\" \
-         -a init -d \"Scaffolding commands\"\n\
-         complete -c {quoted} -n \"__fish_use_subcommand\" \
-         -a man -d \"Generate man page\"\n\
+         {fish_builtins}\
          complete -c {quoted} -n \"__fish_use_subcommand\" \
          -a \"({gt_fish})\" \
          -d \"Module group or command\"\n\
@@ -424,11 +451,16 @@ pub fn man_command() -> Command {
 
 /// Build the roff SYNOPSIS line from a clap Command's arguments.
 pub fn build_synopsis(cmd: Option<&clap::Command>, prog_name: &str, command_name: &str) -> String {
+    // Route program / command names through roff_escape so the per-command
+    // page handles the same metacharacters (backslash / hyphen / apostrophe)
+    // that build_program_man_page already escapes — review #20.
+    let prog = roff_escape(prog_name);
+    let cmd_name = roff_escape(command_name);
     let Some(cmd) = cmd else {
-        return format!("\\fB{prog_name} {command_name}\\fR [OPTIONS]");
+        return format!("\\fB{prog} {cmd_name}\\fR [OPTIONS]");
     };
 
-    let mut parts = vec![format!("\\fB{prog_name} {command_name}\\fR")];
+    let mut parts = vec![format!("\\fB{prog} {cmd_name}\\fR")];
 
     for arg in cmd.get_arguments() {
         // Skip help/version flags injected by clap
@@ -496,9 +528,14 @@ pub fn generate_man_page(
         format_roff_date(days)
     };
 
+    // Route prog / command / version through roff_escape so per-command
+    // pages match the escaping policy already used by
+    // build_program_man_page (review #20).
+    let prog = roff_escape(prog_name);
+    let cmd_name_esc = roff_escape(command_name);
     let title = format!("{}-{}", prog_name, command_name).to_uppercase();
-    let pkg_label = format!("{prog_name} {version}");
-    let manual_label = format!("{prog_name} Manual");
+    let pkg_label = format!("{prog} {}", roff_escape(version));
+    let manual_label = format!("{prog} Manual");
 
     let mut sections: Vec<String> = Vec::new();
 
@@ -514,7 +551,10 @@ pub fn generate_man_page(
         .map(|s| s.to_string())
         .unwrap_or_else(|| command_name.to_string());
     let name_desc = desc.lines().next().unwrap_or("").trim_end_matches('.');
-    sections.push(format!("{prog_name}-{command_name} \\- {name_desc}"));
+    sections.push(format!(
+        "{prog}-{cmd_name_esc} \\- {}",
+        roff_escape(name_desc)
+    ));
 
     // .SH SYNOPSIS
     sections.push(".SH SYNOPSIS".to_string());
@@ -523,12 +563,11 @@ pub fn generate_man_page(
     // .SH DESCRIPTION (using about text)
     if let Some(about) = cmd.and_then(|c| c.get_about()) {
         sections.push(".SH DESCRIPTION".to_string());
-        let escaped = about.to_string().replace('\\', "\\\\").replace('-', "\\-");
-        sections.push(escaped);
+        sections.push(roff_escape(&about.to_string()));
     } else {
         // Emit a stub DESCRIPTION section so it's always present
         sections.push(".SH DESCRIPTION".to_string());
-        sections.push(format!("{prog_name}\\-{command_name}"));
+        sections.push(format!("{prog}\\-{cmd_name_esc}"));
     }
 
     // .SH OPTIONS (only if command has named options)
@@ -567,7 +606,7 @@ pub fn generate_man_page(
                     sections.push(format!("\\fB{flag_str}\\fR \\fI{type_name}\\fR"));
                 }
                 if let Some(help) = arg.get_help() {
-                    sections.push(help.to_string());
+                    sections.push(roff_escape(&help.to_string()));
                 }
                 if let Some(default) = arg.get_default_values().first() {
                     if !is_flag {
@@ -595,10 +634,10 @@ pub fn generate_man_page(
     // .SH SEE ALSO
     sections.push(".SH SEE ALSO".to_string());
     let see_also = [
-        format!("\\fB{prog_name}\\fR(1)"),
-        format!("\\fB{prog_name}\\-list\\fR(1)"),
-        format!("\\fB{prog_name}\\-describe\\fR(1)"),
-        format!("\\fB{prog_name}\\-completion\\fR(1)"),
+        format!("\\fB{prog}\\fR(1)"),
+        format!("\\fB{prog}\\-list\\fR(1)"),
+        format!("\\fB{prog}\\-describe\\fR(1)"),
+        format!("\\fB{prog}\\-completion\\fR(1)"),
     ];
     sections.push(see_also.join(", "));
 
@@ -915,6 +954,62 @@ mod tests {
         assert_eq!(KNOWN_BUILTINS.len(), 14);
     }
 
+    #[test]
+    fn test_known_builtin_descriptions_covers_all_builtins() {
+        // Single source of truth — every name in KNOWN_BUILTINS must have a
+        // matching entry in KNOWN_BUILTIN_DESCRIPTIONS so the bash/zsh/fish
+        // generators can render an accurate completion script (review #3).
+        for name in KNOWN_BUILTINS {
+            assert!(
+                KNOWN_BUILTIN_DESCRIPTIONS.iter().any(|(n, _)| n == name),
+                "KNOWN_BUILTIN_DESCRIPTIONS missing entry for '{name}'"
+            );
+        }
+        assert_eq!(
+            KNOWN_BUILTIN_DESCRIPTIONS.len(),
+            KNOWN_BUILTINS.len(),
+            "tables must stay the same length"
+        );
+    }
+
+    #[test]
+    fn test_bash_completion_lists_every_known_builtin() {
+        // Regression for review #3: the previous hardcoded "completion
+        // describe exec init list man" string only covered 6 of 14
+        // builtins. The generator must now surface every entry so users
+        // can tab-complete config / health / enable / disable / reload /
+        // usage / validate / describe-pipeline.
+        let script = generate_grouped_bash_completion("apcli");
+        for name in KNOWN_BUILTINS {
+            assert!(
+                script.contains(name),
+                "bash completion script missing builtin '{name}': {script}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_zsh_completion_lists_every_known_builtin() {
+        let script = generate_grouped_zsh_completion("apcli");
+        for name in KNOWN_BUILTINS {
+            assert!(
+                script.contains(name),
+                "zsh completion script missing builtin '{name}': {script}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fish_completion_lists_every_known_builtin() {
+        let script = generate_grouped_fish_completion("apcli");
+        for name in KNOWN_BUILTINS {
+            assert!(
+                script.contains(name),
+                "fish completion script missing builtin '{name}': {script}"
+            );
+        }
+    }
+
     // --- Task 2: completion_command / cmd_completion ---
 
     fn make_test_cmd(prog: &str) -> clap::Command {
@@ -1013,7 +1108,9 @@ mod tests {
     #[test]
     fn test_build_synopsis_no_cmd() {
         let synopsis = build_synopsis(None, "apcore-cli", "exec");
-        assert!(synopsis.contains("apcore-cli"));
+        // prog_name is now roff-escaped (review #20) so the literal hyphen
+        // becomes "\-" — match the escaped form.
+        assert!(synopsis.contains("apcore\\-cli"));
         assert!(synopsis.contains("exec"));
     }
 
@@ -1095,7 +1192,8 @@ mod tests {
             page.contains(".SH SEE ALSO"),
             "man page must have SEE ALSO section"
         );
-        assert!(page.contains("apcore-cli"));
+        // prog_name is roff-escaped (review #20) so hyphens become "\-".
+        assert!(page.contains("apcore\\-cli"));
     }
 
     #[test]
