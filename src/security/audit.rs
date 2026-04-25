@@ -74,11 +74,60 @@ impl AuditLogger {
         Self { path: resolved }
     }
 
-    /// Return the username from the environment: `USER` -> `LOGNAME` -> `"unknown"`.
+    /// Resolve the username for an audit log entry.
+    ///
+    /// Spec (SEC-01): canonical resolution chain is
+    ///   `getlogin → getpwuid(geteuid) → USER → LOGNAME → USERNAME → "unknown"`.
+    ///
+    /// `getlogin()` returns the controlling-terminal owner; `getpwuid` looks up
+    /// the effective UID in the password database. Either of those wins over
+    /// env vars, which can be spoofed or stale in container/su scenarios.
     fn get_user() -> String {
-        std::env::var("USER")
-            .or_else(|_| std::env::var("LOGNAME"))
-            .unwrap_or_else(|_| "unknown".to_string())
+        // 1. getlogin() — fastest path; queries the controlling terminal.
+        #[cfg(unix)]
+        {
+            // SAFETY: getlogin() returns either NULL or a pointer to a
+            // statically allocated, NUL-terminated string owned by libc. We
+            // copy it into an owned String before returning so we never hold
+            // the libc-owned pointer past this block.
+            unsafe {
+                let raw = libc::getlogin();
+                if !raw.is_null() {
+                    let cstr = std::ffi::CStr::from_ptr(raw);
+                    let name = cstr.to_string_lossy().into_owned();
+                    if !name.is_empty() {
+                        return name;
+                    }
+                }
+            }
+            // 2. pwd lookup by effective UID.
+            let euid = nix::unistd::geteuid();
+            if let Ok(Some(user)) = nix::unistd::User::from_uid(euid) {
+                if !user.name.is_empty() {
+                    return user.name;
+                }
+            }
+        }
+        // 3. Fall back to env vars: USER → LOGNAME → USERNAME → "unknown".
+        Self::resolve_user_from_env(&|k| std::env::var(k).ok())
+    }
+
+    /// Pure env-fallback helper, separated for unit testing the priority chain.
+    ///
+    /// Walks USER → LOGNAME → USERNAME → "unknown". Returns the first non-empty
+    /// value the lookup function yields.
+    fn resolve_user_from_env<F>(env_lookup: &F) -> String
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        for key in ["USER", "LOGNAME", "USERNAME"] {
+            if let Some(v) = env_lookup(key) {
+                if !v.is_empty() {
+                    return v;
+                }
+            }
+        }
+        "unknown".to_string()
     }
 
     /// Hash `input_data` with a fresh 16-byte random salt.
@@ -315,5 +364,81 @@ mod tests {
         let _logger = AuditLogger::new(Some(path));
         let mode = std::fs::metadata(&nested).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "parent dir must be 0700; got {:o}", mode);
+    }
+
+    /// D10-007: env-fallback helper must walk USER -> LOGNAME -> USERNAME -> "unknown".
+    #[test]
+    fn test_resolve_user_from_env_priority_chain() {
+        // USER takes precedence over LOGNAME/USERNAME.
+        let env = |k: &str| -> Option<String> {
+            match k {
+                "USER" => Some("user_val".to_string()),
+                "LOGNAME" => Some("logname_val".to_string()),
+                "USERNAME" => Some("username_val".to_string()),
+                _ => None,
+            }
+        };
+        assert_eq!(AuditLogger::resolve_user_from_env(&env), "user_val");
+
+        // LOGNAME wins when USER is unset.
+        let env = |k: &str| -> Option<String> {
+            match k {
+                "LOGNAME" => Some("logname_val".to_string()),
+                "USERNAME" => Some("username_val".to_string()),
+                _ => None,
+            }
+        };
+        assert_eq!(AuditLogger::resolve_user_from_env(&env), "logname_val");
+
+        // USERNAME wins when USER and LOGNAME are unset (Windows-style).
+        let env = |k: &str| -> Option<String> {
+            match k {
+                "USERNAME" => Some("username_val".to_string()),
+                _ => None,
+            }
+        };
+        assert_eq!(AuditLogger::resolve_user_from_env(&env), "username_val");
+
+        // All unset → "unknown".
+        let env = |_: &str| -> Option<String> { None };
+        assert_eq!(AuditLogger::resolve_user_from_env(&env), "unknown");
+    }
+
+    /// D10-007: get_user prefers system identity (getlogin/getpwuid) over env vars.
+    /// On Unix dev hosts, getpwuid(geteuid()) always succeeds, so even if USER and
+    /// LOGNAME are set to sentinel values, get_user must NOT return those sentinels.
+    #[cfg(unix)]
+    #[test]
+    fn test_get_user_prefers_system_identity_over_env() {
+        // SAFETY: This test sets process-wide env vars. Other tests in the same
+        // binary that read USER/LOGNAME could observe these values; we restore
+        // them at the end. The critical assertion (system identity beats env) is
+        // independent of pre-existing values.
+        let prev_user = std::env::var("USER").ok();
+        let prev_logname = std::env::var("LOGNAME").ok();
+        std::env::set_var("USER", "sentinel_user_d10_007");
+        std::env::set_var("LOGNAME", "sentinel_logname_d10_007");
+
+        let resolved = AuditLogger::get_user();
+
+        // Restore env first so a panic in the assertions below leaves a clean state.
+        match prev_user {
+            Some(v) => std::env::set_var("USER", v),
+            None => std::env::remove_var("USER"),
+        }
+        match prev_logname {
+            Some(v) => std::env::set_var("LOGNAME", v),
+            None => std::env::remove_var("LOGNAME"),
+        }
+
+        assert_ne!(
+            resolved, "sentinel_user_d10_007",
+            "get_user must consult getlogin/getpwuid before USER env var"
+        );
+        assert_ne!(
+            resolved, "sentinel_logname_d10_007",
+            "get_user must consult getlogin/getpwuid before LOGNAME env var"
+        );
+        assert!(!resolved.is_empty(), "get_user must never return empty");
     }
 }
