@@ -892,8 +892,8 @@ async fn main() {
             .await;
         }
         None => {
-            // No subcommand: print help.
-            let _ = clap::Command::new(env!("CARGO_PKG_NAME")).print_help();
+            // No subcommand: print the real CLI tree (matches the apcli-_ arm).
+            let _ = build_cli_command(None, Some(prog_name.clone()), false).print_help();
             println!();
             std::process::exit(0);
         }
