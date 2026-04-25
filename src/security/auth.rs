@@ -123,11 +123,12 @@ impl AuthProvider {
         }
     }
 
-    /// Add the Authorization header into the given headers map (mutates in place).
+    /// Add the Authorization header to the given headers map and return it.
     ///
-    /// This is the canonical cross-SDK contract (matching Python and TypeScript):
-    /// takes and returns a header map so callers are not coupled to any specific
-    /// HTTP client library.
+    /// Spec (SEC-02) cross-SDK contract: "On success: the input headers dict
+    /// with Authorization added". Takes ownership of the map, augments it, and
+    /// returns it — matching Python's mutate-and-return semantics. Callers
+    /// who need to keep the original map should clone before passing.
     ///
     /// # Errors
     /// * `AuthenticationError::MissingApiKey` — no key is configured.
@@ -135,8 +136,8 @@ impl AuthProvider {
     /// * `AuthenticationError::MalformedApiKey` — key contains CR/LF that HTTP rejects.
     pub fn authenticate_request(
         &self,
-        headers: &mut std::collections::HashMap<String, String>,
-    ) -> Result<(), AuthenticationError> {
+        mut headers: std::collections::HashMap<String, String>,
+    ) -> Result<std::collections::HashMap<String, String>, AuthenticationError> {
         let key = self
             .get_api_key()?
             .ok_or(AuthenticationError::MissingApiKey)?;
@@ -145,7 +146,7 @@ impl AuthProvider {
             return Err(AuthenticationError::MalformedApiKey);
         }
         headers.insert("Authorization".to_string(), format!("Bearer {trimmed}"));
-        Ok(())
+        Ok(headers)
     }
 
     /// Inject the Authorization header into a `reqwest::RequestBuilder`.
@@ -155,8 +156,7 @@ impl AuthProvider {
         &self,
         builder: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder, AuthenticationError> {
-        let mut headers = std::collections::HashMap::new();
-        self.authenticate_request(&mut headers)?;
+        let mut headers = self.authenticate_request(std::collections::HashMap::new())?;
         let auth_value = headers
             .remove("Authorization")
             .expect("authenticate_request must insert Authorization");
@@ -243,10 +243,9 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "abc123") };
         let provider = AuthProvider::new(make_resolver_empty());
-        let mut headers = std::collections::HashMap::new();
-        let result = provider.authenticate_request(&mut headers);
+        let result = provider.authenticate_request(std::collections::HashMap::new());
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
-        assert!(result.is_ok());
+        let headers = result.expect("authenticate_request must succeed");
         assert_eq!(
             headers.get("Authorization").map(|s| s.as_str()),
             Some("Bearer abc123")
@@ -258,8 +257,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         let provider = AuthProvider::new(make_resolver_empty());
-        let mut headers = std::collections::HashMap::new();
-        let result = provider.authenticate_request(&mut headers);
+        let result = provider.authenticate_request(std::collections::HashMap::new());
         assert!(matches!(result, Err(AuthenticationError::MissingApiKey)));
     }
 
@@ -268,8 +266,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "key-with-trailing-newline\n") };
         let provider = AuthProvider::new(make_resolver_empty());
-        let mut headers = std::collections::HashMap::new();
-        let result = provider.authenticate_request(&mut headers);
+        let result = provider.authenticate_request(std::collections::HashMap::new());
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         assert!(
             result.is_ok(),
@@ -282,8 +279,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "bad\nkey") };
         let provider = AuthProvider::new(make_resolver_empty());
-        let mut headers = std::collections::HashMap::new();
-        let result = provider.authenticate_request(&mut headers);
+        let result = provider.authenticate_request(std::collections::HashMap::new());
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         assert!(
             matches!(result, Err(AuthenticationError::MalformedApiKey)),

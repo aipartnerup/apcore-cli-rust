@@ -44,14 +44,10 @@ fn test_authenticate_request_adds_bearer_header() {
     // SAFETY: test-only env manipulation, serialized via ENV_LOCK.
     unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "bearer-test-key") };
     let provider = AuthProvider::new(make_empty_resolver());
-    let mut headers = std::collections::HashMap::new();
-    let result = provider.authenticate_request(&mut headers);
+    let result = provider.authenticate_request(HashMap::new());
     // SAFETY: cleanup.
     unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
-    assert!(
-        result.is_ok(),
-        "authenticate_request must succeed when key is set"
-    );
+    let headers = result.expect("authenticate_request must succeed when key is set");
     assert_eq!(
         headers.get("Authorization").map(|s| s.as_str()),
         Some("Bearer bearer-test-key"),
@@ -121,6 +117,39 @@ fn test_error_messages_match_spec() {
         invalid.to_string().contains("Authentication failed"),
         "InvalidApiKey message must say 'Authentication failed', got: {}",
         invalid
+    );
+}
+
+// Regression test for D10-002: authenticate_request returns owned augmented map.
+// Spec contract: "On success: dict — the input headers dict with Authorization added".
+// The Rust signature must take HashMap<String, String> by value and return the
+// augmented map, matching Python's mutate-and-return semantics.
+#[test]
+fn test_authenticate_request_returns_augmented_headers_map() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    // SAFETY: test-only env manipulation, serialized via ENV_LOCK.
+    unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "owned-return-key") };
+    let provider = AuthProvider::new(make_empty_resolver());
+    let mut headers = HashMap::new();
+    headers.insert("X-Trace-Id".to_string(), "abc-123".to_string());
+
+    // Call must return the augmented map (not unit) and preserve pre-existing entries.
+    let returned: HashMap<String, String> = provider
+        .authenticate_request(headers)
+        .expect("authenticate_request must succeed when key is set");
+
+    // SAFETY: cleanup.
+    unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+
+    assert_eq!(
+        returned.get("Authorization").map(String::as_str),
+        Some("Bearer owned-return-key"),
+        "returned map must contain Authorization header"
+    );
+    assert_eq!(
+        returned.get("X-Trace-Id").map(String::as_str),
+        Some("abc-123"),
+        "returned map must preserve pre-existing entries (mutate-and-return semantics)"
     );
 }
 
