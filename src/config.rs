@@ -85,8 +85,12 @@ impl ConfigResolver {
         config_path: Option<PathBuf>,
     ) -> Self {
         let defaults = Self::DEFAULTS.iter().copied().collect();
-        let config_file = config_path.as_ref().and_then(Self::load_config_file);
-        let config_yaml = config_path.as_ref().and_then(Self::load_config_yaml);
+        // Parse the config file once; derive both the flat map and the raw
+        // Value from the single parse result to avoid reading the file twice.
+        let (config_file, config_yaml) = match config_path.as_ref() {
+            None => (None, None),
+            Some(path) => Self::load_config_both(path),
+        };
 
         Self {
             cli_flags: cli_flags.unwrap_or_default(),
@@ -171,13 +175,49 @@ impl ConfigResolver {
         Some(cursor.clone())
     }
 
-    /// Read + parse the YAML file once for `resolve_object`'s use. Errors
-    /// (missing file, malformed YAML, non-mapping root) collapse to `None`
-    /// — the caller treats absence as "key not present", same semantics as
-    /// the previous per-call read.
-    fn load_config_yaml(path: &PathBuf) -> Option<serde_yaml::Value> {
-        let content = std::fs::read_to_string(path).ok()?;
-        serde_yaml::from_str(&content).ok()
+    /// Read and parse the config file exactly once, returning both the flat
+    /// map (for `resolve`) and the raw Value (for `resolve_object`).
+    ///
+    /// Avoids the double-read that `load_config_file` + `load_config_yaml`
+    /// previously incurred on every `ConfigResolver::new` call.
+    fn load_config_both(
+        path: &PathBuf,
+    ) -> (Option<HashMap<String, String>>, Option<serde_yaml::Value>) {
+        let content = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, None),
+            Err(e) => {
+                warn!(
+                    "Configuration file '{}' could not be read: {}",
+                    path.display(),
+                    e
+                );
+                return (None, None);
+            }
+        };
+
+        let parsed: serde_yaml::Value = match serde_yaml::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => {
+                warn!(
+                    "Configuration file '{}' is malformed, using defaults.",
+                    path.display()
+                );
+                return (None, None);
+            }
+        };
+
+        if !matches!(parsed, serde_yaml::Value::Mapping(_)) {
+            warn!(
+                "Configuration file '{}' is malformed, using defaults.",
+                path.display()
+            );
+            return (None, None);
+        }
+
+        let mut flat = HashMap::new();
+        Self::flatten_yaml_value(parsed.clone(), "", &mut flat);
+        (Some(flat), Some(parsed))
     }
 
     /// Look up the alternate key (namespace ↔ legacy) for backward compatibility.
@@ -191,52 +231,6 @@ impl ConfigResolver {
             }
         }
         None
-    }
-
-    /// Load and flatten a YAML config file into dot-notation keys.
-    ///
-    /// Returns `None` if the file does not exist or cannot be parsed.
-    fn load_config_file(path: &PathBuf) -> Option<HashMap<String, String>> {
-        let content = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // FR-DISP-005 AF-1: file not found — silent.
-                return None;
-            }
-            Err(e) => {
-                warn!(
-                    "Configuration file '{}' could not be read: {}",
-                    path.display(),
-                    e
-                );
-                return None;
-            }
-        };
-
-        let parsed: serde_yaml::Value = match serde_yaml::from_str(&content) {
-            Ok(v) => v,
-            Err(_) => {
-                // FR-DISP-005 AF-2: malformed YAML — log warning, use defaults.
-                warn!(
-                    "Configuration file '{}' is malformed, using defaults.",
-                    path.display()
-                );
-                return None;
-            }
-        };
-
-        // Root must be a mapping (dict). Scalars, sequences, and null are invalid.
-        if !matches!(parsed, serde_yaml::Value::Mapping(_)) {
-            warn!(
-                "Configuration file '{}' is malformed, using defaults.",
-                path.display()
-            );
-            return None;
-        }
-
-        let mut out = HashMap::new();
-        Self::flatten_yaml_value(parsed, "", &mut out);
-        Some(out)
     }
 
     /// Recursively flatten a nested YAML value into dot-separated keys.
