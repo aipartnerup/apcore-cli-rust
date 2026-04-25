@@ -697,31 +697,60 @@ pub(crate) fn map_module_error_to_exit_code(err: &apcore::errors::ModuleError) -
 // Schema validation helper
 // ---------------------------------------------------------------------------
 
-/// Validate `input` against a JSON Schema object.
+/// Validate `input` against a JSON Schema object using the `jsonschema` crate.
 ///
-/// This is a lightweight inline checker sufficient until `jsonschema` crate
-/// integration lands (FE-08).  It enforces the `required` array only — if
-/// every field listed in `required` is present in `input`, the call succeeds.
+/// Enforces all JSON Schema keywords present in `schema` (type, format, enum,
+/// pattern, minimum, maximum, required, etc.).  Returns the first validation
+/// error message on failure.
+///
+/// clap delivers all flag values as strings.  Before running jsonschema this
+/// function coerces string values to integer/number where the schema declares
+/// those types, so `--port 8080` (string "8080") satisfies `{type: "integer"}`.
 ///
 /// # Errors
-/// Returns `Err(String)` describing the first missing required field.
+/// Returns `Err(String)` with the first schema violation found.
 pub(crate) fn validate_against_schema(
     input: &HashMap<String, Value>,
     schema: &Value,
 ) -> Result<(), String> {
-    // Extract "required" array if present.
-    let required = match schema.get("required") {
-        Some(Value::Array(arr)) => arr,
-        _ => return Ok(()),
-    };
-    for req in required {
-        if let Some(field_name) = req.as_str() {
-            if !input.contains_key(field_name) {
-                return Err(format!("required field '{}' is missing", field_name));
+    let mut instance =
+        serde_json::to_value(input).map_err(|e| format!("failed to serialize input: {e}"))?;
+
+    // Coerce string values to their schema-declared numeric types.
+    if let (Some(obj), Some(props)) = (
+        instance.as_object_mut(),
+        schema.get("properties").and_then(|p| p.as_object()),
+    ) {
+        for (key, prop) in props {
+            let type_str = match prop.get("type").and_then(|t| t.as_str()) {
+                Some(t) => t,
+                None => continue,
+            };
+            if let Some(Value::String(s)) = obj.get(key) {
+                let coerced = match type_str {
+                    "integer" => s.parse::<i64>().ok().map(Value::from),
+                    "number" => s.parse::<f64>().ok().map(Value::from),
+                    _ => None,
+                };
+                if let Some(v) = coerced {
+                    obj.insert(key.clone(), v);
+                }
             }
         }
     }
-    Ok(())
+
+    let validator =
+        jsonschema::validator_for(schema).map_err(|e| format!("invalid schema: {e}"))?;
+
+    let errors: Vec<String> = validator
+        .iter_errors(&instance)
+        .map(|e| e.to_string())
+        .collect();
+
+    match errors.first() {
+        Some(msg) => Err(msg.clone()),
+        None => Ok(()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1884,6 +1913,34 @@ mod tests {
             std::collections::HashMap::new();
         let result = validate_against_schema(&input, &schema);
         assert!(result.is_ok(), "no required fields: empty input must pass");
+    }
+
+    #[test]
+    fn test_validate_against_schema_type_mismatch_fails() {
+        let schema = serde_json::json!({
+            "properties": {
+                "port": {"type": "integer"}
+            },
+            "required": ["port"]
+        });
+        let mut input = std::collections::HashMap::new();
+        input.insert("port".to_string(), serde_json::json!("not_a_number"));
+        let result = validate_against_schema(&input, &schema);
+        assert!(result.is_err(), "type mismatch must fail validation");
+    }
+
+    #[test]
+    fn test_validate_against_schema_enum_violation_fails() {
+        let schema = serde_json::json!({
+            "properties": {
+                "mode": {"type": "string", "enum": ["read", "write"]}
+            },
+            "required": ["mode"]
+        });
+        let mut input = std::collections::HashMap::new();
+        input.insert("mode".to_string(), serde_json::json!("delete"));
+        let result = validate_against_schema(&input, &schema);
+        assert!(result.is_err(), "enum violation must fail validation");
     }
 
     // GroupedModuleGroup / is_valid_group_name tests deleted along with the
