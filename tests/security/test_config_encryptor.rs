@@ -41,9 +41,9 @@ fn test_retrieve_missing_key_returns_error() {
 
 #[test]
 fn test_tampered_ciphertext_returns_auth_tag_error() {
-    // Corrupting the ciphertext must yield AuthTagMismatch on retrieve.
+    // Corrupting a v1 ciphertext must yield AuthTagMismatch on retrieve.
     let enc = aes_enc();
-    // Build a syntactically valid but cryptographically corrupt enc: token:
+    // Build a syntactically valid but cryptographically corrupt enc: v1 token:
     // 40 bytes (12 nonce + 16 tag + 12 ciphertext) with a corrupted tag byte.
     let mut bad = vec![0u8; 40];
     bad[12] ^= 0xFF; // corrupt tag byte
@@ -51,7 +51,33 @@ fn test_tampered_ciphertext_returns_auth_tag_error() {
     let result = enc.retrieve(&config_value, "some.key");
     assert!(
         matches!(result, Err(ConfigDecryptionError::AuthTagMismatch)),
-        "expected AuthTagMismatch for tampered ciphertext, got {result:?}"
+        "expected AuthTagMismatch for tampered v1 ciphertext, got {result:?}"
+    );
+}
+
+#[test]
+fn test_tampered_v2_ciphertext_returns_auth_tag_error() {
+    // Corrupting a v2 ciphertext must yield AuthTagMismatch on retrieve.
+    let enc = aes_enc();
+    // v2 wire: 16-byte salt + 12 nonce + 16 tag + payload; corrupt the tag.
+    let mut bad = vec![0u8; 56]; // 16 salt + 40
+    bad[16 + 12] ^= 0xFF; // corrupt tag byte
+    let config_value = format!("enc:v2:{}", B64.encode(&bad));
+    let result = enc.retrieve(&config_value, "some.key");
+    assert!(
+        matches!(result, Err(ConfigDecryptionError::AuthTagMismatch)),
+        "expected AuthTagMismatch for tampered v2 ciphertext, got {result:?}"
+    );
+}
+
+#[test]
+fn test_store_produces_v2_token() {
+    // New store() calls must produce enc:v2: tokens.
+    let enc = aes_enc();
+    let token = enc.store("some.key", "value").expect("store must succeed");
+    assert!(
+        token.starts_with("enc:v2:"),
+        "store must produce enc:v2: token, got: {token}"
     );
 }
 
