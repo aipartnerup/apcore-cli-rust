@@ -97,17 +97,16 @@ impl AuthProvider {
     /// — distinguishes "not configured" from "stored key is corrupt", which
     /// matters for user diagnostics.
     pub fn get_api_key(&self) -> Result<Option<String>, AuthenticationError> {
-        // Tier 1: environment variable (plain value — pass through as-is).
-        if let Ok(val) = std::env::var("APCORE_AUTH_API_KEY") {
-            if !val.is_empty() {
-                return Ok(Some(val));
-            }
-        }
-
-        // Tier 2: config resolver (CLI flag --api-key, or config file auth.api_key).
-        // Note: env var APCORE_AUTH_API_KEY is already handled above; pass None here
-        // to avoid double-checking it through the resolver path.
-        let raw = match self.config.resolve("auth.api_key", Some("--api-key"), None) {
+        // Delegate entirely to ConfigResolver so the standard 4-tier precedence
+        // is enforced: CLI flag (--api-key) > env var (APCORE_AUTH_API_KEY) >
+        // config file (auth.api_key) > default (None).
+        // Hardcoding the env-var lookup before the resolver inverted the order
+        // (env would win over CLI flag) — fixed by A-D-008.
+        let raw = match self.config.resolve(
+            "auth.api_key",
+            Some("--api-key"),
+            Some("APCORE_AUTH_API_KEY"),
+        ) {
             Some(r) => r,
             None => return Ok(None),
         };

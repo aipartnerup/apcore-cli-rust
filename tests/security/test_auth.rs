@@ -1,6 +1,8 @@
 // apcore-cli — Integration tests for AuthProvider.
 // Protocol spec: SEC-02
 
+use std::collections::HashMap;
+
 use apcore_cli::config::ConfigResolver;
 use apcore_cli::security::auth::{AuthProvider, AuthenticationError};
 
@@ -99,5 +101,29 @@ fn test_error_messages_match_spec() {
         invalid.to_string().contains("Authentication failed"),
         "InvalidApiKey message must say 'Authentication failed', got: {}",
         invalid
+    );
+}
+
+// Regression test for A-D-008: CLI flag must take precedence over env var.
+#[test]
+fn test_cli_flag_takes_precedence_over_env_var() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    // Set env var to "env-key"
+    unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "env-key") };
+
+    // Supply "cli-key" via the resolver's cli_flags map
+    let mut flags = HashMap::new();
+    flags.insert("--api-key".to_string(), Some("cli-key".to_string()));
+    let resolver = ConfigResolver::new(Some(flags), None);
+    let provider = AuthProvider::new(resolver);
+    let result = provider.get_api_key();
+
+    unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+
+    // CLI flag must win — should be "cli-key", not "env-key"
+    assert_eq!(
+        result.unwrap(),
+        Some("cli-key".to_string()),
+        "CLI --api-key flag must take precedence over APCORE_AUTH_API_KEY env var"
     );
 }
