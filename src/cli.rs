@@ -420,13 +420,15 @@ pub fn build_module_command_with_limit(
     // as SchemaRefResolution so the user sees EXIT_SCHEMA_CIRCULAR_REF (48)
     // — previously the error was swallowed via .unwrap_or_else and the user
     // got a downstream clap parse error built from un-resolved $refs (review #8).
-    let resolved_schema =
-        crate::ref_resolver::resolve_refs(&module_def.input_schema, 32, module_id).map_err(
-            |e| CliError::SchemaRefResolution {
-                module_id: module_id.clone(),
-                source: e,
-            },
-        )?;
+    let resolved_schema = crate::ref_resolver::resolve_refs(
+        &module_def.input_schema,
+        crate::ref_resolver::MAX_REF_DEPTH,
+        module_id,
+    )
+    .map_err(|e| CliError::SchemaRefResolution {
+        module_id: module_id.clone(),
+        source: e,
+    })?;
 
     // Build clap args from JSON Schema properties.
     let schema_args = crate::schema_parser::schema_to_clap_args_with_limit(
