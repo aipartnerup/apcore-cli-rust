@@ -10,10 +10,26 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
-// Constants
+// Internal helpers
 // ---------------------------------------------------------------------------
 
-const HASH_SALT: &str = "apcore-cli-audit-v1";
+/// Serialize `v` to a compact, deterministically sorted JSON string.
+///
+/// Spec: each language serializes to sorted-key JSON before hashing so that
+/// equivalent input dicts produce the same hash regardless of insertion order.
+fn sorted_json(v: &Value) -> String {
+    match v {
+        Value::Object(map) => {
+            let sorted: std::collections::BTreeMap<_, _> = map.iter().collect();
+            let pairs: Vec<String> = sorted
+                .iter()
+                .map(|(k, val)| format!("{}:{}", serde_json::json!(k), sorted_json(val)))
+                .collect();
+            format!("{{{}}}", pairs.join(","))
+        }
+        other => other.to_string(),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // AuditLogger
@@ -67,44 +83,23 @@ impl AuditLogger {
 
     /// Hash `input_data` with a fresh 16-byte random salt.
     ///
-    /// Digest = SHA-256(`random_salt` `:` `HASH_SALT` `:` stable_json(`input_data`)).
-    /// Returns `(hex_salt, hex_hash)` — both lowercase hex.
+    /// Digest = SHA-256(salt(16) || sorted_json(`input_data`)).
+    /// Returns hex-encoded SHA-256 hash (64 chars).
     ///
-    /// The salt is persisted alongside the hash in each JSONL entry so a
-    /// verifier holding the original input can reproduce the digest. This
-    /// preserves the non-correlation property (each entry uses a fresh salt)
-    /// while keeping the hash forensically verifiable.
-    fn hash_input(input_data: &Value) -> (String, String) {
+    /// Spec (SEC-03): hash = sha256(salt + json.dumps(input, sort_keys=True)).
+    /// A fresh per-call salt prevents cross-invocation input correlation.
+    fn hash_input(input_data: &Value) -> String {
         use aes_gcm::aead::rand_core::RngCore;
         use aes_gcm::aead::OsRng;
 
         let mut salt = [0u8; 16];
         OsRng.fill_bytes(&mut salt);
 
-        let payload = Self::stable_json(input_data);
-        let salted = format!("{}:{}", HASH_SALT, payload);
-
+        let payload = sorted_json(input_data);
         let mut hasher = Sha256::new();
         hasher.update(salt);
-        hasher.update(salted.as_bytes());
-
-        let hex_salt = salt.iter().map(|b| format!("{:02x}", b)).collect();
-        (hex_salt, format!("{:x}", hasher.finalize()))
-    }
-
-    /// Produce a stable (sorted-key) JSON string for `v`.
-    fn stable_json(v: &Value) -> String {
-        match v {
-            Value::Object(map) => {
-                let sorted: std::collections::BTreeMap<_, _> = map.iter().collect();
-                let pairs: Vec<String> = sorted
-                    .iter()
-                    .map(|(k, val)| format!("{}:{}", serde_json::json!(k), Self::stable_json(val)))
-                    .collect();
-                format!("{{{}}}", pairs.join(","))
-            }
-            other => other.to_string(),
-        }
+        hasher.update(payload.as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 
     /// Log a single module execution event.
@@ -136,12 +131,11 @@ impl AuditLogger {
         };
 
         let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-        let (input_salt, input_hash) = Self::hash_input(input_data);
+        let input_hash = Self::hash_input(input_data);
         let entry = json!({
             "timestamp":   timestamp,
             "user":        Self::get_user(),
             "module_id":   module_id,
-            "input_salt":  input_salt,
             "input_hash":  input_hash,
             "status":      status,
             "exit_code":   exit_code,
@@ -238,43 +232,43 @@ mod tests {
         assert!(entry["timestamp"].as_str().unwrap().ends_with('Z'));
         assert!(entry["user"].is_string());
         assert_eq!(entry["module_id"], "x.y");
-        assert!(entry["input_salt"].as_str().unwrap().len() == 32); // hex 16 bytes
         assert!(entry["input_hash"].as_str().unwrap().len() == 64); // hex SHA-256
+                                                                    // input_salt is NOT persisted per spec (A-D-007 fix)
+        assert!(entry.get("input_salt").is_none());
         assert_eq!(entry["status"], "success");
         assert!(entry["exit_code"].is_number());
         assert!(entry["duration_ms"].is_number());
     }
 
     #[test]
-    fn test_audit_logger_salt_enables_hash_reproduction() {
-        // A verifier who knows the original input + the persisted salt must
-        // be able to recompute the recorded digest exactly.
+    fn test_audit_logger_different_inputs_produce_different_hashes() {
+        // Even without a persisted salt, different inputs must produce different
+        // hashes in practice (different sorted JSON payload).
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("audit.jsonl");
         let logger = AuditLogger::new(Some(path.clone()));
-        let input = json!({"alpha": 1, "beta": "two"});
-        logger.log_execution("repro.test", &input, "success", 0, 0);
-        let raw = std::fs::read_to_string(&path).unwrap();
-        let entry: serde_json::Value = serde_json::from_str(raw.trim()).unwrap();
-
-        let salt_hex = entry["input_salt"].as_str().unwrap();
-        let recorded_hash = entry["input_hash"].as_str().unwrap();
-
-        let salt_bytes: Vec<u8> = (0..salt_hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&salt_hex[i..i + 2], 16).unwrap())
+        logger.log_execution("x.y", &json!({"a": 1}), "success", 0, 0);
+        logger.log_execution("x.y", &json!({"a": 2}), "success", 0, 0);
+        let lines: Vec<String> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(String::from)
             .collect();
-        let payload = AuditLogger::stable_json(&input);
-        let salted = format!("{}:{}", HASH_SALT, payload);
-        let mut hasher = Sha256::new();
-        hasher.update(&salt_bytes);
-        hasher.update(salted.as_bytes());
-        let recomputed = format!("{:x}", hasher.finalize());
-        assert_eq!(recomputed, recorded_hash);
+        let h0 = serde_json::from_str::<serde_json::Value>(&lines[0]).unwrap()["input_hash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let h1 = serde_json::from_str::<serde_json::Value>(&lines[1]).unwrap()["input_hash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(h0, h1, "different inputs must produce different hashes");
     }
 
     #[test]
-    fn test_audit_logger_salt_unique_per_call() {
+    fn test_audit_logger_same_input_different_hash_per_call() {
+        // Each invocation uses a fresh random salt, so two calls with the same
+        // input must produce different hash values.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("audit.jsonl");
         let logger = AuditLogger::new(Some(path.clone()));
@@ -285,15 +279,18 @@ mod tests {
             .lines()
             .map(String::from)
             .collect();
-        let salt0 = serde_json::from_str::<serde_json::Value>(&lines[0]).unwrap()["input_salt"]
+        let h0 = serde_json::from_str::<serde_json::Value>(&lines[0]).unwrap()["input_hash"]
             .as_str()
             .unwrap()
             .to_string();
-        let salt1 = serde_json::from_str::<serde_json::Value>(&lines[1]).unwrap()["input_salt"]
+        let h1 = serde_json::from_str::<serde_json::Value>(&lines[1]).unwrap()["input_hash"]
             .as_str()
             .unwrap()
             .to_string();
-        assert_ne!(salt0, salt1, "salts must be unique across audit entries");
+        assert_ne!(
+            h0, h1,
+            "same input across calls must produce different hashes (random salt)"
+        );
     }
 
     #[cfg(unix)]

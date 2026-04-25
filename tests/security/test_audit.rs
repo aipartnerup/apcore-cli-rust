@@ -68,12 +68,10 @@ fn test_audit_logger_record_has_required_fields() {
     );
     assert!(entry["user"].is_string(), "user field must be a string");
     assert_eq!(entry["module_id"], "math.add");
+    // input_salt is NOT persisted per spec (A-D-007 fix — matches Python/TS schema)
     assert!(
-        entry["input_salt"]
-            .as_str()
-            .map(|s| s.len() == 32)
-            .unwrap_or(false),
-        "input_salt must be a 32-char hex (16 bytes)"
+        entry.get("input_salt").is_none(),
+        "input_salt must not be present in entry"
     );
     assert!(
         entry["input_hash"]
