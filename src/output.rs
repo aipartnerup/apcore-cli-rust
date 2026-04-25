@@ -136,16 +136,6 @@ fn csv_field(s: &str) -> String {
 ///
 /// Returns the formatted string ready for printing to stdout.
 pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str]) -> String {
-    format_module_list_with_deps(modules, format, filter_tags, false)
-}
-
-/// Format module list with optional dependency count column.
-pub fn format_module_list_with_deps(
-    modules: &[Value],
-    format: &str,
-    filter_tags: &[&str],
-    show_deps: bool,
-) -> String {
     use comfy_table::{ContentArrangement, Table};
 
     match format {
@@ -162,26 +152,14 @@ pub fn format_module_list_with_deps(
 
             let mut table = Table::new();
             table.set_content_arrangement(ContentArrangement::Dynamic);
-            if show_deps {
-                table.set_header(vec!["ID", "Description", "Tags", "Deps"]);
-            } else {
-                table.set_header(vec!["ID", "Description", "Tags"]);
-            }
+            table.set_header(vec!["ID", "Description", "Tags"]);
 
             for m in modules {
                 let id = extract_str(m, &["module_id", "id", "canonical_id", "name"]);
                 let desc_raw = extract_str(m, &["description"]);
                 let desc = truncate(desc_raw, DESCRIPTION_TRUNCATE_LEN);
                 let tags = extract_tags(m).join(", ");
-                if show_deps {
-                    let dep_count = m
-                        .get("dependencies")
-                        .and_then(|v| v.as_array())
-                        .map_or(0, |a| a.len());
-                    table.add_row(vec![id.to_string(), desc, tags, dep_count.to_string()]);
-                } else {
-                    table.add_row(vec![id.to_string(), desc, tags]);
-                }
+                table.add_row(vec![id.to_string(), desc, tags]);
             }
 
             table.to_string()
