@@ -71,15 +71,6 @@ pub fn validate_tag(tag: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// validate_module_id (local, mirrors cli::validate_module_id rules)
-// ---------------------------------------------------------------------------
-
-fn validate_module_id_discovery(id: &str) -> bool {
-    // Delegate to the canonical validator in cli module.
-    crate::cli::validate_module_id(id).is_ok()
-}
-
-// ---------------------------------------------------------------------------
 // module_has_all_tags helper
 // ---------------------------------------------------------------------------
 
@@ -243,7 +234,7 @@ pub fn cmd_describe(
     explicit_format: Option<&str>,
 ) -> Result<String, DiscoveryError> {
     // Validate module ID format.
-    if !validate_module_id_discovery(module_id) {
+    if crate::cli::validate_module_id(module_id).is_err() {
         return Err(DiscoveryError::InvalidModuleId(module_id.to_string()));
     }
 
