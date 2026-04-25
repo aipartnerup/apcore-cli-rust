@@ -14,6 +14,13 @@ const SANDBOX_ALLOWED_ENV_PREFIXES: &[&str] = &["APCORE_"];
 /// Exact environment variable names allowed through the sandbox env whitelist.
 const SANDBOX_ALLOWED_ENV_KEYS: &[&str] = &["PATH", "LANG", "LC_ALL"];
 
+/// Environment variable prefixes denied even when matched by the allow list.
+/// Credential-bearing namespaces must never reach the sandboxed child process.
+const SANDBOX_DENIED_ENV_PREFIXES: &[&str] = &["APCORE_AUTH_"];
+
+/// Exact environment variable names denied regardless of prefix match.
+const SANDBOX_DENIED_ENV_KEYS: &[&str] = &["APCORE_AUTH_API_KEY"];
+
 // ---------------------------------------------------------------------------
 // ModuleExecutionError
 // ---------------------------------------------------------------------------
@@ -148,6 +155,10 @@ impl Sandbox {
             if SANDBOX_ALLOWED_ENV_PREFIXES
                 .iter()
                 .any(|prefix| k.starts_with(prefix))
+                && !SANDBOX_DENIED_ENV_PREFIXES
+                    .iter()
+                    .any(|prefix| k.starts_with(prefix))
+                && !SANDBOX_DENIED_ENV_KEYS.contains(&k.as_str())
             {
                 env.push((k.clone(), v.clone()));
             }
@@ -289,5 +300,74 @@ mod tests {
         let encoded = encode_result(&v);
         let decoded = decode_result(&encoded).unwrap();
         assert_eq!(decoded["result"], 42);
+    }
+
+    #[test]
+    fn test_sandbox_env_does_not_include_auth_api_key() {
+        // APCORE_AUTH_API_KEY must never be forwarded to the sandboxed child
+        // even though it sits under the APCORE_ prefix whitelist.
+        unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "secret-key-12345") };
+        let host_env: std::collections::HashMap<String, String> = std::env::vars().collect();
+
+        let mut env: Vec<(String, String)> = Vec::new();
+        for key in SANDBOX_ALLOWED_ENV_KEYS {
+            if let Some(val) = host_env.get(*key) {
+                env.push((key.to_string(), val.clone()));
+            }
+        }
+        for (k, v) in &host_env {
+            if SANDBOX_ALLOWED_ENV_PREFIXES
+                .iter()
+                .any(|prefix| k.starts_with(prefix))
+                && !SANDBOX_DENIED_ENV_PREFIXES
+                    .iter()
+                    .any(|prefix| k.starts_with(prefix))
+                && !SANDBOX_DENIED_ENV_KEYS.contains(&k.as_str())
+            {
+                env.push((k.clone(), v.clone()));
+            }
+        }
+
+        unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+
+        assert!(
+            !env.iter().any(|(k, _)| k == "APCORE_AUTH_API_KEY"),
+            "APCORE_AUTH_API_KEY must not be forwarded to the sandbox environment"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_env_does_not_include_auth_prefix() {
+        unsafe {
+            std::env::set_var("APCORE_AUTH_TOKEN", "bearer-xyz");
+            std::env::set_var("APCORE_AUTH_SECRET", "shh");
+        }
+        let host_env: std::collections::HashMap<String, String> = std::env::vars().collect();
+
+        let env: Vec<(String, String)> = host_env
+            .iter()
+            .filter(|(k, _)| {
+                SANDBOX_ALLOWED_ENV_PREFIXES
+                    .iter()
+                    .any(|p| k.starts_with(p))
+                    && !SANDBOX_DENIED_ENV_PREFIXES.iter().any(|p| k.starts_with(p))
+                    && !SANDBOX_DENIED_ENV_KEYS.contains(&k.as_str())
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        unsafe {
+            std::env::remove_var("APCORE_AUTH_TOKEN");
+            std::env::remove_var("APCORE_AUTH_SECRET");
+        }
+
+        let leaked: Vec<_> = env
+            .iter()
+            .filter(|(k, _)| k.starts_with("APCORE_AUTH_"))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "APCORE_AUTH_* vars must not leak into sandbox env: {leaked:?}"
+        );
     }
 }
