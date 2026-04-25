@@ -101,28 +101,19 @@ All modules are auto-discovered. CLI flags are auto-generated from each module's
 
 ### Programmatic approach (Rust library)
 
-Use `apcore-cli` as a library crate to embed CLI into your own binary:
-
-```rust
-use apcore_cli::CliConfig;
-use std::sync::Arc;
-
-// Pre-populated registry from your framework (skips filesystem discovery)
-let config = CliConfig {
-    prog_name: Some("myapp".to_string()),
-    registry: Some(Arc::new(my_provider)),
-    executor: Some(Arc::new(my_executor)),
-    ..Default::default()
-};
-// Use config.registry / config.executor at dispatch time
-```
+The high-level embedding API (`CliConfig` / `run_with_config`) was removed in
+v0.7.0 (audit findings D9-001/002) — the previous stub never had a working
+dispatch loop. A real embedding API will be reintroduced when implemented.
+Until then, downstream crates can pull individual building blocks
+(`FsDiscoverer`, `RegistryProvider`, `ExposureFilter`,
+`GroupedModuleGroup`, the per-subcommand `register_*` helpers) and assemble
+their own root command tree, or simply invoke the `apcli` binary directly.
 
 ### Exposure Filtering (FE-12)
 
 `apcore-cli` supports declarative module exposure filtering via `ExposureFilter`.
-Because Rust's `CliConfig` does not currently have an `expose` field, filtering is
-applied via a builder method on `GroupedModuleGroup` -- construct the group first,
-then attach the filter:
+Filtering is applied via a builder method on `GroupedModuleGroup` -- construct
+the group first, then attach the filter:
 
 ```rust
 use apcore_cli::{ExposureFilter, GroupedModuleGroup};
@@ -149,9 +140,8 @@ let group = GroupedModuleGroup::new(registry.clone(), executor.clone(), 1000)
 // Then continue building your clap::Command from the group...
 ```
 
-> **Note:** Exposure filtering must be wired via `GroupedModuleGroup::with_exposure_filter`
-> -- the `CliConfig` struct does not currently expose this field. See CHANGELOG 0.6.0 /
-> FE-12 for background.
+> **Note:** Exposure filtering must be wired via `GroupedModuleGroup::with_exposure_filter`.
+> See CHANGELOG 0.6.0 / FE-12 for background.
 
 ## Integration with Existing Projects
 
@@ -388,7 +378,7 @@ The following items are re-exported at the crate root (`apcore_cli::*`). Everyth
 
 ### Structs
 
-`CliConfig`, `GroupedModuleGroup`, `ExposureFilter`, `ConfigResolver`, `AuditLogger`, `AuthProvider`, `ConfigEncryptor`, `Sandbox`, `CliApprovalHandler`, `FsDiscoverer`, `ApCoreRegistryProvider`, `ListOptions`, `SchemaArgs`, `BoolFlagPair`.
+`GroupedModuleGroup`, `ExposureFilter`, `ConfigResolver`, `AuditLogger`, `AuthProvider`, `ConfigEncryptor`, `Sandbox`, `CliApprovalHandler`, `FsDiscoverer`, `ApCoreRegistryProvider`, `ListOptions`, `SchemaArgs`, `BoolFlagPair`.
 
 > Note: `LazyModuleGroup` is **not** re-exported at the crate root -- access it as `apcore_cli::cli::LazyModuleGroup`.
 

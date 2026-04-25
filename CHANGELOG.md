@@ -6,6 +6,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.7.0] - 2026-04-25
 
+### Removed
+
+- Removed `run_with_config` and `CliConfig` from the public surface — both
+  were stubs and unwired (D9-001, D9-002). `run_with_config` returned 1 with
+  a "not yet implemented" message in every branch; `CliConfig` declared
+  `commands_dir`, `binding_path`, `group_depth`, `expose`, and `apcli`
+  fields that no code path read. The embedding API will be reintroduced
+  when actually implemented. `CliConfigError` was removed alongside.
+- Removed `EXIT_CONFIG_NAMESPACE_DUPLICATE` constant alias (D9-003) — use
+  `EXIT_CONFIG_NAMESPACE_RESERVED` for exit code 78.
+
 ### Added
 
 - **Cross-language conformance test** (`tests/conformance_apcli_visibility.rs`) consuming the shared apcli-visibility fixtures from the `aiperceivable/apcore-cli` spec repo (`conformance/fixtures/apcli-visibility/`). One `#[test]` per canonical scenario (`standalone-default`, `embedded-default`, `cli-override`, `env-override`, `yaml-include`). Asserts apcli group visibility and subcommand registration against each fixture's `create_cli.json` / `env.json` / `input.yaml` inputs. A process-global `Mutex` guards scenarios that touch `APCORE_CLI_APCLI` / `cwd`. Byte-matching against `expected_help.txt` is gated behind `#[ignore]` until the canonical clap v4 / GNU-style help formatter is ported — tracked for parity with `apcore-cli-typescript/src/canonical-help.ts`.
@@ -15,19 +26,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `ExposureFilter` struct in `exposure.rs` with `is_exposed(&self, module_id)` and `filter_modules(&self, ids)` methods.
   - Three modes: `All` (default), `Include` (whitelist), `Exclude` (blacklist) with glob-pattern matching.
   - `ExposureFilter::from_config(value)` constructor for loading from `apcore.yaml` `expose` section.
-  - `CliConfig::expose` field for programmatic usage.
   - `list --exposure {exposed,hidden,all}` filter flag in discovery commands.
   - `GroupedModuleGroup` integration: applies exposure filter during command registration.
   - `ConfigResolver` gains `expose.*` config keys.
-  - 4-tier config precedence: `CliConfig.expose` > `--expose-mode` CLI flag > env var > `apcore.yaml`.
+  - 3-tier config precedence: `--expose-mode` CLI flag > env var > `apcore.yaml`.
+    (The fourth `CliConfig.expose` tier was removed alongside `CliConfig` —
+    see the Removed section above.)
   - Hidden modules remain invocable via `exec <module_id>`.
-- `CliConfig::app: Option<apcore::APCore>` — accept a unified `APCore` client facade.
-  When `app` is set, `registry` and `executor` are derived from it. Setting `app` together
-  with `registry` or `executor` returns an error: `"app is mutually exclusive with
-  registry/executor"`.
-- `CliConfig::validate()` method — returns `Err(CliConfigError)` when `app` is set alongside
-  `registry` or `executor`.
-- `CliConfigError` error type for `CliConfig` validation failures.
 - New file: `exposure.rs`.
 
 ### Fixed

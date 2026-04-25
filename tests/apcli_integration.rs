@@ -215,7 +215,7 @@ fn apcli_reserved_name_rejected_in_build_module_command() {
 }
 
 // ---------------------------------------------------------------------------
-// T-APCLI-04: CliConfig `apcli: false` hides group in standalone
+// T-APCLI-04: Tier-1 cli-config `apcli: false` hides group in standalone
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -254,13 +254,13 @@ fn apcli_empty_exclude_equivalent_to_all() {
 }
 
 // ---------------------------------------------------------------------------
-// T-APCLI-38: CliConfig (Tier 1) wins over yaml (Tier 3)
+// T-APCLI-38: programmatic Tier 1 wins over yaml (Tier 3)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn apcli_cli_config_tier1_overrides_yaml_tier3() {
-    // Tier 3 yaml = false (hide). Tier 1 CliConfig = true (show). CliConfig
-    // wins per spec §5.
+    // Tier 3 yaml = false (hide). Tier 1 programmatic cli-config = true (show).
+    // Tier 1 wins per spec §5.
     let yaml_cfg = ApcliGroup::from_yaml(
         Some(serde_yaml::Value::Bool(false)),
         /*registry_injected*/ false,
@@ -277,7 +277,7 @@ fn apcli_cli_config_tier1_overrides_yaml_tier3() {
     assert_eq!(
         cli_cfg.resolve_visibility(),
         "all",
-        "Tier 1 CliConfig must override Tier 3 yaml"
+        "Tier 1 cli-config must override Tier 3 yaml"
     );
 }
 

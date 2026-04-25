@@ -44,164 +44,10 @@ pub const EXIT_ACL_DENIED: i32 = 77;
 // All four namespace/env errors share exit code 78 per protocol spec —
 // the spec groups them into a single "config namespace error" category.
 pub const EXIT_CONFIG_NAMESPACE_RESERVED: i32 = 78;
-pub const EXIT_CONFIG_NAMESPACE_DUPLICATE: i32 = 78;
 pub const EXIT_CONFIG_MOUNT_ERROR: i32 = 66;
 pub const EXIT_CONFIG_BIND_ERROR: i32 = 65;
 pub const EXIT_ERROR_FORMATTER_DUPLICATE: i32 = 70;
 pub const EXIT_SIGINT: i32 = 130;
-
-// ---------------------------------------------------------------------------
-// CliConfig — high-level configuration for embedded CLI usage.
-// ---------------------------------------------------------------------------
-
-/// Error returned when `CliConfig` contains conflicting options.
-#[derive(Debug)]
-pub struct CliConfigError(pub String);
-
-impl std::fmt::Display for CliConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for CliConfigError {}
-
-/// Configuration for creating a CLI that uses a pre-populated registry
-/// instead of filesystem discovery.
-///
-/// Frameworks that register modules at runtime (e.g. apflow's bridge) can
-/// build their own [`RegistryProvider`] + [`ModuleExecutor`] and pass them
-/// here to skip the default filesystem scan.
-///
-/// As of v0.7.0, an [`apcore::APCore`] unified client can be supplied via the
-/// `app` field instead of providing separate `registry` / `executor` values.
-/// `app` is mutually exclusive with `registry` and `executor`.
-///
-/// # Example
-/// ```ignore
-/// use std::sync::Arc;
-///
-/// let config = apcore_cli::CliConfig {
-///     prog_name: Some("myapp".to_string()),
-///     registry: Some(Arc::new(my_provider)),
-///     executor: Some(Arc::new(my_executor)),
-///     ..Default::default()
-/// };
-/// // Use config.registry / config.executor at dispatch time instead of
-/// // performing filesystem discovery with FsDiscoverer.
-/// ```
-pub struct CliConfig {
-    /// Override the program name shown in help text.
-    pub prog_name: Option<String>,
-    /// Override extensions directory (only used when `registry` is None).
-    pub extensions_dir: Option<String>,
-    /// Path to convention-based commands directory (apcore-toolkit ConventionScanner).
-    /// TODO: wire to apcore-toolkit when the `toolkit` feature is enabled.
-    pub commands_dir: Option<String>,
-    /// Path to binding.yaml for display overlay (apcore-toolkit DisplayResolver).
-    /// TODO: wire to apcore-toolkit when the `toolkit` feature is enabled.
-    pub binding_path: Option<String>,
-    /// Pre-populated registry provider. When set, skips filesystem discovery.
-    /// Mutually exclusive with `app`.
-    pub registry: Option<std::sync::Arc<dyn discovery::RegistryProvider>>,
-    /// Pre-built module executor. When set, skips executor construction.
-    /// Mutually exclusive with `app`.
-    pub executor: Option<std::sync::Arc<apcore::Executor>>,
-    /// Unified APCore client. When set, `registry` and `executor` are derived
-    /// from it. Mutually exclusive with `registry` and `executor`.
-    pub app: Option<apcore::APCore>,
-    /// Group depth for multi-level module grouping (default: 1).
-    /// Higher values allow deeper dotted-name grouping.
-    pub group_depth: usize,
-    /// Module exposure filter (FE-12). When set, the CLI builder will apply
-    /// this filter at dispatch time when constructing the module command tree.
-    pub expose: Option<exposure::ExposureFilter>,
-    /// Built-in apcli group configuration (FE-13). When `None`, visibility
-    /// falls through to `apcore.yaml` (Tier 3) and auto-detect (Tier 4).
-    pub apcli: Option<ApcliConfig>,
-}
-
-impl CliConfig {
-    /// Validate that `app` is not set alongside `registry` or `executor`.
-    ///
-    /// Returns `Err` with a descriptive message when the configuration is
-    /// invalid. Callers should invoke this before using the config at
-    /// dispatch time.
-    pub fn validate(&self) -> Result<(), CliConfigError> {
-        if self.app.is_some() && (self.registry.is_some() || self.executor.is_some()) {
-            return Err(CliConfigError(
-                "app is mutually exclusive with registry/executor".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Run the CLI with a pre-built [`CliConfig`].
-///
-/// This is the primary embedding API. Downstream crates that build their own
-/// `APCore` client or pre-populate a registry call this instead of invoking
-/// the binary directly.
-///
-/// # Dispatch paths
-///
-/// - `config.app` is set: registry and executor are derived from the `APCore`
-///   client via `registry_arc()` and a new `Executor` sharing the same
-///   registry. Filesystem discovery is skipped.
-/// - `config.registry` is set: pre-populated registry is used directly;
-///   filesystem discovery is skipped.
-/// - Neither is set: filesystem discovery runs using `config.extensions_dir`
-///   (or the default extensions directory when that is also `None`).
-///
-/// # Note on full dispatch
-///
-/// The full dispatch loop (clap argument parsing, module execution, output
-/// formatting) currently lives in `main.rs`. This function handles config
-/// validation and component extraction. Full extraction of the dispatch loop
-/// into `lib.rs` is tracked as a follow-up task.
-///
-/// # Returns
-///
-/// The process exit code: `0` on success, `1` on invalid config.
-pub async fn run_with_config(config: CliConfig, _args: Vec<String>) -> i32 {
-    // 1. Validate the config — bail immediately on conflict.
-    if let Err(e) = config.validate() {
-        eprintln!("Error: {e}");
-        return 1;
-    }
-
-    // 2. Branch on the three dispatch paths.
-    if let Some(app) = config.app {
-        // app= path: extract the shared registry Arc from the APCore client.
-        // Build a new Executor from the same registry so module registrations
-        // made on the APCore client are visible to the CLI dispatcher.
-        // Note: custom middleware added to app.executor() is not inherited here;
-        // the new executor uses default pipeline settings.
-        let registry_arc = app.registry_arc();
-        let _executor = apcore::Executor::new(
-            std::sync::Arc::clone(&registry_arc),
-            apcore::Config::default(),
-        );
-        // Full CLI dispatch using _executor is tracked as a follow-up.
-        // Components correctly wired; dispatch routing pending.
-        eprintln!(
-            "apcore-cli: run_with_config dispatch not yet implemented -- use apcli binary directly"
-        );
-        1
-    } else if config.registry.is_some() {
-        // Pre-populated registry path — components already provided by caller.
-        eprintln!(
-            "apcore-cli: run_with_config dispatch not yet implemented -- use apcli binary directly"
-        );
-        1
-    } else {
-        // Filesystem discovery path (default).
-        eprintln!(
-            "apcore-cli: run_with_config dispatch not yet implemented -- use apcli binary directly"
-        );
-        1
-    }
-}
 
 // ---------------------------------------------------------------------------
 // FE-13 apcli subcommand dispatcher (§4.9)
@@ -273,23 +119,6 @@ pub fn register_apcli_subcommands(
     cmd
 }
 
-impl Default for CliConfig {
-    fn default() -> Self {
-        Self {
-            prog_name: None,
-            extensions_dir: None,
-            commands_dir: None,
-            binding_path: None,
-            registry: None,
-            executor: None,
-            app: None,
-            group_depth: 1,
-            expose: None,
-            apcli: None,
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Crate-root re-exports (USER-FACING API only)
 // ---------------------------------------------------------------------------
@@ -302,8 +131,10 @@ impl Default for CliConfig {
 // in-crate test suite. The dispatch_* fns in `system_cmd` and `strategy`
 // remain `pub` because the binary entry-point in main.rs calls them via the
 // full path (`apcore_cli::system_cmd::dispatch_health`, etc.) and main.rs is
-// a separate binary crate. Downstream users wanting to embed the CLI should
-// use `CliConfig` and the user-facing API below.
+// a separate binary crate. The high-level `CliConfig` / `run_with_config`
+// embedding API was removed in v0.7.0 (D9-001/002) — it never had a working
+// dispatch loop; an embedding API will be reintroduced when actually
+// implemented. Downstream users currently invoke the binary directly.
 
 // Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{
@@ -390,27 +221,6 @@ pub use system_cmd::SYSTEM_COMMANDS;
 mod tests {
     use super::*;
 
-    #[test]
-    fn cli_config_default_has_all_none() {
-        let config = CliConfig::default();
-        assert!(config.prog_name.is_none());
-        assert!(config.extensions_dir.is_none());
-        assert!(config.commands_dir.is_none());
-        assert!(config.binding_path.is_none());
-        assert!(config.registry.is_none());
-        assert!(config.executor.is_none());
-        assert!(config.app.is_none());
-        assert_eq!(config.group_depth, 1);
-        assert!(config.expose.is_none());
-        assert!(config.apcli.is_none());
-    }
-
-    #[test]
-    fn cli_config_default_apcli_is_none() {
-        let config = CliConfig::default();
-        assert!(config.apcli.is_none());
-    }
-
     /// Drift guard: the Registrar table built inside
     /// `register_apcli_subcommands` must cover every name in
     /// `APCLI_SUBCOMMAND_NAMES`. Adding a subcommand to one list without the
@@ -431,60 +241,5 @@ mod tests {
                  Registrar table in lib.rs"
             );
         }
-    }
-
-    #[test]
-    fn cli_config_validate_ok_when_only_app() {
-        let config = CliConfig {
-            app: Some(apcore::APCore::new()),
-            ..Default::default()
-        };
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn cli_config_validate_ok_when_no_app() {
-        let config = CliConfig {
-            registry: Some(std::sync::Arc::new(discovery::MockRegistry::new(vec![]))),
-            ..Default::default()
-        };
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn cli_config_validate_err_app_with_registry() {
-        let config = CliConfig {
-            app: Some(apcore::APCore::new()),
-            registry: Some(std::sync::Arc::new(discovery::MockRegistry::new(vec![]))),
-            ..Default::default()
-        };
-        let err = config.validate().unwrap_err();
-        assert!(err.0.contains("mutually exclusive"));
-    }
-
-    #[test]
-    fn cli_config_validate_err_app_with_executor() {
-        let config = CliConfig {
-            app: Some(apcore::APCore::new()),
-            executor: Some(std::sync::Arc::new(apcore::Executor::new(
-                std::sync::Arc::new(apcore::Registry::new()),
-                apcore::Config::default(),
-            ))),
-            ..Default::default()
-        };
-        let err = config.validate().unwrap_err();
-        assert!(err.0.contains("mutually exclusive"));
-    }
-
-    #[test]
-    fn cli_config_accepts_pre_populated_registry() {
-        let mock_registry = discovery::MockRegistry::new(vec![]);
-        let config = CliConfig {
-            prog_name: Some("test-app".to_string()),
-            registry: Some(std::sync::Arc::new(mock_registry)),
-            ..Default::default()
-        };
-        assert_eq!(config.prog_name.as_deref(), Some("test-app"));
-        assert!(config.registry.is_some());
     }
 }

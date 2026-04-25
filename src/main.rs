@@ -305,8 +305,8 @@ fn build_cli_command(
         );
 
     // The binary is always standalone (registry not injected), so discovery
-    // flags are unconditionally applied here. Embedders that call via
-    // `run_with_config` pass `standalone=false` to skip them.
+    // flags are unconditionally applied here. A future embedding API would
+    // pass `standalone=false` to skip them.
     cmd = apply_discovery_flags(cmd, /*standalone*/ true);
 
     // ----------------------------------------------------------------------

@@ -39,8 +39,9 @@
 ## v0.6.0 Conventions
 
 - exposure module + ExposureFilter + `with_exposure_filter` builder pattern on the
-  grouped command group (FE-12). Note: Rust CliConfig does NOT yet expose an `expose`
-  field directly — filter must be wired via the builder method on the command group.
+  grouped command group (FE-12). Note: the Rust embedding API (`CliConfig`) was
+  removed in v0.7.0 (D9-001/002); filter must be wired via the builder method on
+  the command group.
 - system_cmd module registers health/usage/enable/disable/reload/config commands (FE-11).
 - strategy module + describe-pipeline + --strategy flag (FE-11).
 - validate module + --dry-run flag (FE-11).

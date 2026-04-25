@@ -172,7 +172,7 @@ fn build_scenario_command(shared: &Value) -> Command {
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    // Tier 1 — explicit CliConfig apcli override.
+    // Tier 1 — explicit programmatic apcli override (was: CliConfig.apcli).
     let cli_cfg = shared.get("apcli").map(parse_apcli_value);
 
     // Tier 3 — apcore.yaml (consumed from current cwd, set by the scenario
@@ -183,7 +183,7 @@ fn build_scenario_command(shared: &Value) -> Command {
         None
     };
 
-    // Tier resolution: CliConfig > yaml > auto-detect.
+    // Tier resolution: programmatic Tier 1 > yaml > auto-detect.
     let apcli_cfg = match cli_cfg {
         Some(cfg) => ApcliGroup::from_cli_config(Some(cfg), registry_injected),
         None => ApcliGroup::from_yaml(yaml_val, registry_injected),

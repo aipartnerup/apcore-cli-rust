@@ -71,7 +71,7 @@ pub enum ApcliMode {
     Exclude(Vec<String>),
 }
 
-/// User-facing apcli config attached to [`CliConfig`](crate::CliConfig).
+/// User-facing apcli config consumed by [`ApcliGroup::from_cli_config`].
 ///
 /// Boolean shorthand (handled at the yaml/builder layer) maps to
 /// `mode = All` / `mode = None`.
@@ -156,7 +156,8 @@ impl ApcliGroup {
     // Factories
     // -------------------------------------------------------------------------
 
-    /// Tier 1 constructor — config came from [`CliConfig.apcli`](crate::CliConfig).
+    /// Tier 1 constructor — config came from a programmatic embedder
+    /// (i.e. an `ApcliConfig` value passed to a future embedding API).
     ///
     /// A non-auto mode from this tier wins over env var and yaml. Because
     /// `ApcliConfig` is strongly typed, no validation is needed here.
@@ -403,7 +404,7 @@ impl ApcliGroup {
     /// 3. yaml non-auto mode.
     /// 4. Auto-detect: `registry_injected ? "none" : "all"`.
     pub fn resolve_visibility(&self) -> &'static str {
-        // Tier 1 — CliConfig non-auto.
+        // Tier 1 — programmatic embedder config (non-auto).
         if self.from_cli_config && self.mode != InternalMode::Auto {
             return self.mode.as_str();
         }
@@ -612,7 +613,7 @@ mod tests {
     #[test]
     fn from_cli_config_none_mode_beats_env_show() {
         // Tier 1 (None) > Tier 2 (env=show). Even without disable_env, an
-        // explicit CliConfig mode wins — defence in depth.
+        // explicit Tier-1 (programmatic) mode wins — defence in depth.
         let _g = ENV_MUTEX.lock().unwrap();
         set_env("show");
         let group = ApcliGroup::from_cli_config(
