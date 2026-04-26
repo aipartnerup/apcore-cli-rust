@@ -196,6 +196,18 @@ impl ConfigEncryptor {
     /// 1. `APCORE_CLI_CONFIG_PASSPHRASE` env var if set and non-empty.
     /// 2. `hostname:username` fallback.
     fn _derive_key_with_salt(&self, salt: &[u8]) -> Result<[u8; 32], ConfigDecryptionError> {
+        self._derive_key_with_salt_iter(salt, PBKDF2_ITERATIONS)
+    }
+
+    /// Like [`_derive_key_with_salt`] but with a configurable iteration count.
+    /// Used by [`_aes_decrypt_v1`] to support the 600k → 100k retry that
+    /// Python and TypeScript SDKs perform for early-version v1 ciphertexts
+    /// (D10-001).
+    fn _derive_key_with_salt_iter(
+        &self,
+        salt: &[u8],
+        iterations: u32,
+    ) -> Result<[u8; 32], ConfigDecryptionError> {
         let material = if let Ok(passphrase) = std::env::var("APCORE_CLI_CONFIG_PASSPHRASE") {
             if !passphrase.is_empty() {
                 passphrase
@@ -218,7 +230,7 @@ impl ConfigEncryptor {
             format!("{hostname}:{username}")
         };
         let mut key = [0u8; 32];
-        pbkdf2_hmac::<Sha256>(material.as_bytes(), salt, PBKDF2_ITERATIONS, &mut key);
+        pbkdf2_hmac::<Sha256>(material.as_bytes(), salt, iterations, &mut key);
         Ok(key)
     }
 
@@ -277,26 +289,53 @@ impl ConfigEncryptor {
 
     /// Decrypt v1 (legacy) wire bytes back to a UTF-8 string.
     ///
-    /// Expected wire format: `nonce[12] || tag[16] || ciphertext` with
-    /// the static `PBKDF2_SALT_V1` salt.  Read-only — new encryptions
-    /// use `_aes_encrypt_v2` / `enc:v2:` tokens instead.
+    /// Expected wire format: `nonce[12] || tag[16] || ciphertext` with the
+    /// static `PBKDF2_SALT_V1` salt. Read-only — new encryptions use
+    /// `_aes_encrypt_v2` / `enc:v2:` tokens instead.
+    ///
+    /// Iteration retry per the cross-SDK contract (D10-001): tries 600k
+    /// (current Rust-written v1) first, then 100k (early Python/TS-written
+    /// v1). Mirrors apcore-cli-python/src/apcore_cli/security/config_encryptor.py:139
+    /// and apcore-cli-typescript/src/security/config-encryptor.ts:197.
     pub(crate) fn _aes_decrypt_v1(&self, data: &[u8]) -> Result<String, ConfigDecryptionError> {
         if data.len() < MIN_WIRE_LEN_V1 {
             return Err(ConfigDecryptionError::AuthTagMismatch);
         }
-        let raw_key = self._derive_key_with_salt(PBKDF2_SALT_V1)?;
-        let cipher = Aes256Gcm::new_from_slice(&raw_key)
-            .map_err(|e| ConfigDecryptionError::KdfError(e.to_string()))?;
         let nonce = Nonce::from_slice(&data[..12]);
         let tag = &data[12..28];
         let ciphertext = &data[28..];
-        let mut ct_with_tag = Vec::with_capacity(ciphertext.len() + 16);
-        ct_with_tag.extend_from_slice(ciphertext);
-        ct_with_tag.extend_from_slice(tag);
-        let plaintext = cipher
-            .decrypt(nonce, ct_with_tag.as_slice())
-            .map_err(|_| ConfigDecryptionError::AuthTagMismatch)?;
-        String::from_utf8(plaintext).map_err(|_| ConfigDecryptionError::InvalidUtf8)
+
+        let mut last_err: Option<ConfigDecryptionError> = None;
+        for iterations in [PBKDF2_ITERATIONS, 100_000_u32] {
+            let raw_key = match self._derive_key_with_salt_iter(PBKDF2_SALT_V1, iterations) {
+                Ok(k) => k,
+                Err(e) => {
+                    last_err = Some(e);
+                    continue;
+                }
+            };
+            let cipher = match Aes256Gcm::new_from_slice(&raw_key) {
+                Ok(c) => c,
+                Err(e) => {
+                    last_err = Some(ConfigDecryptionError::KdfError(e.to_string()));
+                    continue;
+                }
+            };
+            let mut ct_with_tag = Vec::with_capacity(ciphertext.len() + 16);
+            ct_with_tag.extend_from_slice(ciphertext);
+            ct_with_tag.extend_from_slice(tag);
+            match cipher.decrypt(nonce, ct_with_tag.as_slice()) {
+                Ok(plaintext) => {
+                    return String::from_utf8(plaintext)
+                        .map_err(|_| ConfigDecryptionError::InvalidUtf8);
+                }
+                Err(_) => {
+                    last_err = Some(ConfigDecryptionError::AuthTagMismatch);
+                    continue;
+                }
+            }
+        }
+        Err(last_err.unwrap_or(ConfigDecryptionError::AuthTagMismatch))
     }
 }
 
@@ -319,6 +358,68 @@ mod tests {
         let ciphertext = enc._aes_encrypt_v2("hello-secret").expect("encrypt");
         let plaintext = enc._aes_decrypt_v2(&ciphertext).expect("decrypt");
         assert_eq!(plaintext, "hello-secret");
+    }
+
+    /// Helper: encrypt v1 wire bytes with an explicit iteration count so we
+    /// can test the 600k → 100k decrypt fallback (D10-001) without exposing
+    /// the legacy 100k path as a public encryption API.
+    fn _v1_encrypt_with_iterations(
+        enc: &ConfigEncryptor,
+        plaintext: &str,
+        iterations: u32,
+    ) -> Vec<u8> {
+        use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
+        let raw_key = enc
+            ._derive_key_with_salt_iter(PBKDF2_SALT_V1, iterations)
+            .expect("derive");
+        let cipher = Aes256Gcm::new_from_slice(&raw_key).expect("cipher");
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ct_with_tag = cipher
+            .encrypt(&nonce, plaintext.as_bytes())
+            .expect("encrypt");
+        // Wire format: nonce[12] || tag[16] || ciphertext.
+        // aes-gcm appends the 16-byte tag to the end of the ciphertext, so we
+        // need to splice it into the middle slot.
+        assert!(ct_with_tag.len() >= 16);
+        let split = ct_with_tag.len() - 16;
+        let (ct, tag) = ct_with_tag.split_at(split);
+        let mut wire = Vec::with_capacity(12 + 16 + ct.len());
+        wire.extend_from_slice(&nonce);
+        wire.extend_from_slice(tag);
+        wire.extend_from_slice(ct);
+        wire
+    }
+
+    #[test]
+    fn test_aes_v1_decrypts_600k_ciphertext() {
+        // Sanity: the current iteration count round-trips.
+        let enc = aes_encryptor();
+        let wire = _v1_encrypt_with_iterations(&enc, "current-secret", PBKDF2_ITERATIONS);
+        let plaintext = enc._aes_decrypt_v1(&wire).expect("decrypt");
+        assert_eq!(plaintext, "current-secret");
+    }
+
+    #[test]
+    fn test_aes_v1_decrypts_100k_legacy_ciphertext() {
+        // D10-001: very early SDK builds wrote v1 ciphertexts with 100k
+        // PBKDF2 iterations. Python and TS retry with 100k after 600k fails;
+        // Rust must do the same so legacy values remain readable.
+        let enc = aes_encryptor();
+        let wire = _v1_encrypt_with_iterations(&enc, "legacy-secret", 100_000);
+        let plaintext = enc
+            ._aes_decrypt_v1(&wire)
+            .expect("v1 decrypt must retry at 100k iterations");
+        assert_eq!(plaintext, "legacy-secret");
+    }
+
+    #[test]
+    fn test_aes_v1_rejects_wrong_iterations() {
+        // Ciphertext encrypted with 200k (neither 600k nor 100k) must fail
+        // — proves the retry list is bounded, not "try anything".
+        let enc = aes_encryptor();
+        let wire = _v1_encrypt_with_iterations(&enc, "weird", 200_000);
+        let result = enc._aes_decrypt_v1(&wire);
+        assert!(result.is_err(), "200k ciphertext must not decrypt");
     }
 
     #[test]

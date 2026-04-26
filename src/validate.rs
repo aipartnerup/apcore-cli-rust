@@ -280,11 +280,8 @@ pub async fn dispatch_validate(
         .expect("module_id is required");
     let format = matches.get_one::<String>("format").map(|s| s.as_str());
 
-    // Validate module ID.
-    if let Err(_e) = crate::cli::validate_module_id(module_id) {
-        eprintln!("Error: Invalid module ID format: '{module_id}'.");
-        std::process::exit(crate::EXIT_INVALID_INPUT);
-    }
+    // Validate module ID (exits with code 2 on failure — D10-004).
+    crate::cli::validate_module_id_or_exit(module_id);
 
     // Check module exists.
     if registry.get_module_descriptor(module_id).is_none() {

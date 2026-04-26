@@ -587,7 +587,16 @@ const MODULE_ID_MAX_LEN: usize = 192;
 /// * Must not start with a digit or uppercase letter
 ///
 /// # Errors
-/// Returns `CliError::InvalidModuleId` (exit code 2) on any violation.
+/// Returns `CliError::InvalidModuleId` on any violation. Top-level CLI
+/// dispatch maps that to **exit code 2** (`EXIT_INVALID_INPUT`).
+///
+/// Cross-SDK note (D10-004): Python `validate_module_id` calls `sys.exit(2)`
+/// directly; TypeScript calls `process.exit(2)`. Rust keeps the Result form
+/// so callers can compose with other validation (and so this function is
+/// testable). Production code SHOULD prefer
+/// [`validate_module_id_or_exit`] which mirrors the Python/TS observable
+/// behavior — callers that ignore a `Result` here would silently pass
+/// invalid IDs downstream.
 pub fn validate_module_id(module_id: &str) -> Result<(), CliError> {
     if module_id.len() > MODULE_ID_MAX_LEN {
         return Err(CliError::InvalidModuleId(format!(
@@ -600,6 +609,22 @@ pub fn validate_module_id(module_id: &str) -> Result<(), CliError> {
         )));
     }
     Ok(())
+}
+
+/// Validate a module identifier, exiting on failure.
+///
+/// On a valid id, returns `()`. On any violation, writes the error message
+/// to stderr and calls `std::process::exit(2)` — matching Python's
+/// `sys.exit(2)` and TypeScript's `process.exit(2)` observable behavior
+/// (D10-004 cross-SDK parity). Use this from production dispatch paths
+/// where the Result form's only sensible Err handling is the exit pattern;
+/// use the underlying [`validate_module_id`] from tests and from callers
+/// that need to chain the validation with other checks.
+pub fn validate_module_id_or_exit(module_id: &str) {
+    if let Err(CliError::InvalidModuleId(msg)) = validate_module_id(module_id) {
+        eprintln!("Error: {msg}");
+        std::process::exit(crate::EXIT_INVALID_INPUT);
+    }
 }
 
 /// Hand-written validator matching `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`.
@@ -1002,11 +1027,7 @@ pub async fn dispatch_module(
     };
 
     // 1. Validate module ID format (exit 2 on bad format).
-    if let Err(e) = validate_module_id(module_id) {
-        eprintln!("Error: Invalid module ID format: '{module_id}'.");
-        let _ = e;
-        std::process::exit(EXIT_INVALID_INPUT);
-    }
+    validate_module_id_or_exit(module_id);
 
     // 2. Registry lookup (exit 44 if not found).
     let module_def = match registry.get_module_descriptor(module_id) {
