@@ -74,3 +74,65 @@ pub fn encode_result(result: &Value) -> String {
 pub fn decode_result(raw: &str) -> Result<Value, serde_json::Error> {
     serde_json::from_str(raw)
 }
+
+// -------------------------------------------------------------------
+// Unit tests
+// -------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn encode_result_handles_object() {
+        let v = json!({"ok": true, "n": 42});
+        let s = encode_result(&v);
+        // Object key order is not stable across serde_json versions; round-trip
+        // through decode_result to assert semantic equality instead.
+        let parsed: Value = serde_json::from_str(&s).expect("encoder must produce valid JSON");
+        assert_eq!(parsed, v);
+    }
+
+    #[test]
+    fn encode_result_handles_null() {
+        let v = Value::Null;
+        assert_eq!(encode_result(&v), "null");
+    }
+
+    #[test]
+    fn encode_result_handles_array() {
+        let v = json!(["a", 1, null]);
+        // Array order is preserved by serde_json's encoder; check the literal.
+        assert_eq!(encode_result(&v), r#"["a",1,null]"#);
+        // Also assert via round-trip for documentation parity with the object case.
+        let parsed: Value = serde_json::from_str(&encode_result(&v)).unwrap();
+        assert_eq!(parsed, v);
+    }
+
+    #[test]
+    fn decode_result_round_trips_object() {
+        let original = json!({"alpha": [1, 2, 3], "beta": {"nested": "x"}});
+        let encoded = encode_result(&original);
+        let decoded = decode_result(&encoded).expect("valid JSON");
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn decode_result_rejects_invalid_json() {
+        let result = decode_result("{not json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_result_accepts_null() {
+        let decoded = decode_result("null").expect("valid JSON");
+        assert!(decoded.is_null());
+    }
+
+    #[test]
+    fn default_extensions_root_constant() {
+        // Guard against accidental changes to the documented fallback path.
+        assert_eq!(DEFAULT_EXTENSIONS_ROOT, "./extensions");
+    }
+}
