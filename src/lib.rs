@@ -131,10 +131,19 @@ pub fn register_apcli_subcommands(
 // in-crate test suite. The dispatch_* fns in `system_cmd` and `strategy`
 // remain `pub` because the binary entry-point in main.rs calls them via the
 // full path (`apcore_cli::system_cmd::dispatch_health`, etc.) and main.rs is
-// a separate binary crate. The high-level `CliConfig` / `run_with_config`
+// a separate binary crate.
+//
+// **No `create_cli` / `run_with_config` factory in Rust** (cross-SDK parity
+// note from audit D1-005, 2026-04-26): Python exposes `apcore_cli.create_cli`
+// and TypeScript exposes `createCli` from `apcore-cli`; Rust intentionally
+// has no equivalent factory. The high-level `CliConfig` / `run_with_config`
 // embedding API was removed in v0.7.0 (D9-001/002) — it never had a working
-// dispatch loop; an embedding API will be reintroduced when actually
-// implemented. Downstream users currently invoke the binary directly.
+// dispatch loop. An embedding API will be reintroduced when actually
+// implemented; until then, downstream Rust users invoke the binary directly
+// or compose the per-subcommand registrars (e.g.,
+// `register_completion_command`) onto a `clap::Command` they own. The
+// Python `allowed_prefixes` parameter on `create_cli` is therefore a
+// Python-only safety knob with no Rust counterpart at this writing.
 
 // Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{

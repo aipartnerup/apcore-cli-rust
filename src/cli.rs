@@ -902,7 +902,7 @@ fn extract_cli_kwargs(
 ) -> HashMap<String, Value> {
     use crate::schema_parser::schema_to_clap_args;
 
-    let schema_args = match schema_to_clap_args(&module_def.input_schema) {
+    let schema_args = match schema_to_clap_args(&module_def.input_schema, None) {
         Ok(sa) => sa,
         Err(_) => return HashMap::new(),
     };

@@ -22,7 +22,7 @@ fn make_kwargs(pairs: &[(&str, &str)]) -> HashMap<String, Value> {
 #[test]
 fn test_schema_to_clap_args_empty_schema() {
     let schema = json!({});
-    let result = schema_to_clap_args(&schema).unwrap();
+    let result = schema_to_clap_args(&schema, None).unwrap();
     assert!(result.args.is_empty(), "empty schema must produce no args");
     assert!(result.bool_pairs.is_empty());
     assert!(result.enum_maps.is_empty());
@@ -37,7 +37,7 @@ fn test_schema_to_clap_args_string_property() {
         },
         "required": []
     });
-    let result = schema_to_clap_args(&schema).unwrap();
+    let result = schema_to_clap_args(&schema, None).unwrap();
     assert_eq!(result.args.len(), 1);
     let arg = find_arg(&result.args, "text").expect("--text must exist");
     assert_eq!(arg.get_id(), "text");
@@ -53,7 +53,7 @@ fn test_schema_to_clap_args_required_field_is_required() {
         },
         "required": ["a"]
     });
-    let result = schema_to_clap_args(&schema).unwrap();
+    let result = schema_to_clap_args(&schema, None).unwrap();
     let arg = find_arg(&result.args, "a").expect("--a must exist");
     assert!(
         arg.is_required_set(),
@@ -70,7 +70,7 @@ fn test_schema_to_clap_args_enum_field() {
         },
         "required": []
     });
-    let result = schema_to_clap_args(&schema).unwrap();
+    let result = schema_to_clap_args(&schema, None).unwrap();
     let arg = find_arg(&result.args, "mode").expect("--mode must exist");
     let pvs = arg.get_possible_values();
     let names: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
@@ -89,7 +89,7 @@ fn test_reconvert_enum_values_string_passthrough() {
     let schema = json!({
         "properties": {"output_type": {"type": "string", "enum": ["json", "csv"]}}
     });
-    let schema_args = schema_to_clap_args(&schema).unwrap();
+    let schema_args = schema_to_clap_args(&schema, None).unwrap();
     let kwargs = make_kwargs(&[("output_type", "json")]);
     let result = reconvert_enum_values(kwargs, &schema_args);
     assert_eq!(result["output_type"], Value::String("json".to_string()));
@@ -100,7 +100,7 @@ fn test_reconvert_enum_values_integer_coercion() {
     let schema = json!({
         "properties": {"level": {"type": "integer", "enum": [1, 2, 3]}}
     });
-    let schema_args = schema_to_clap_args(&schema).unwrap();
+    let schema_args = schema_to_clap_args(&schema, None).unwrap();
     let kwargs = make_kwargs(&[("level", "2")]);
     let result = reconvert_enum_values(kwargs, &schema_args);
     assert!(
@@ -115,7 +115,7 @@ fn test_reconvert_enum_values_boolean_coercion() {
     let schema = json!({
         "properties": {"strict": {"type": "string", "enum": [true, false]}}
     });
-    let schema_args = schema_to_clap_args(&schema).unwrap();
+    let schema_args = schema_to_clap_args(&schema, None).unwrap();
     let kwargs = make_kwargs(&[("strict", "true")]);
     let result = reconvert_enum_values(kwargs, &schema_args);
     assert_eq!(result["strict"], Value::Bool(true));
@@ -130,7 +130,7 @@ fn test_full_pipeline_integer_enum_roundtrip() {
             "level": {"type": "integer", "enum": [1, 2, 3]}
         }
     });
-    let schema_args = schema_to_clap_args(&schema).unwrap();
+    let schema_args = schema_to_clap_args(&schema, None).unwrap();
 
     let cmd = schema_args
         .args
@@ -153,7 +153,7 @@ fn test_full_pipeline_boolean_flag_pair() {
     let schema = json!({
         "properties": {"log_output": {"type": "boolean"}}
     });
-    let schema_args = schema_to_clap_args(&schema).unwrap();
+    let schema_args = schema_to_clap_args(&schema, None).unwrap();
 
     let cmd = schema_args
         .args

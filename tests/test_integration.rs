@@ -19,7 +19,8 @@ fn test_schema_to_args_then_format_result() {
             "name": {"type": "string", "description": "User name"}
         }
     });
-    let schema_args = schema_to_clap_args(&schema).expect("schema_to_clap_args should succeed");
+    let schema_args =
+        schema_to_clap_args(&schema, None).expect("schema_to_clap_args should succeed");
     assert!(
         !schema_args.args.is_empty(),
         "should produce at least one arg"
@@ -78,7 +79,7 @@ fn test_resolve_refs_then_schema_to_clap_args() {
     );
 
     // Now generate clap args from the resolved schema.
-    let schema_args = schema_to_clap_args(&resolved_schema)
+    let schema_args = schema_to_clap_args(&resolved_schema, None)
         .expect("schema_to_clap_args should succeed on resolved schema");
     let arg_names: Vec<&str> = schema_args
         .args

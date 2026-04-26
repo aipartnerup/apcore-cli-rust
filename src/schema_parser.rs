@@ -181,10 +181,18 @@ pub fn map_type(prop_name: &str, prop_schema: &Value) -> Result<Arg, SchemaParse
 ///
 /// # Arguments
 /// * `schema` — JSON Schema object (may have `"properties"` key)
+/// * `max_help_length` — `Option<usize>` truncation budget for help text;
+///   `None` falls back to [`HELP_TEXT_MAX_LEN`] (1000), `Some(n)` selects
+///   an explicit limit. Cross-SDK parity with Python's
+///   `schema_to_click_options(schema, max_help_length=1000)` and TS's
+///   `schemaToCliOptions(schema, maxHelpLength = 1000)`.
 ///
 /// Returns empty SchemaArgs for schemas without properties.
-pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserError> {
-    schema_to_clap_args_with_limit(schema, HELP_TEXT_MAX_LEN)
+pub fn schema_to_clap_args(
+    schema: &Value,
+    max_help_length: Option<usize>,
+) -> Result<SchemaArgs, SchemaParserError> {
+    schema_to_clap_args_with_limit(schema, max_help_length.unwrap_or(HELP_TEXT_MAX_LEN))
 }
 
 /// Convert JSON Schema properties to clap Args with a configurable help text max length.
@@ -453,7 +461,7 @@ mod tests {
     #[test]
     fn test_schema_to_clap_args_empty_schema() {
         let schema = json!({});
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(result.args.is_empty());
         assert!(result.bool_pairs.is_empty());
         assert!(result.enum_maps.is_empty());
@@ -465,7 +473,7 @@ mod tests {
             "properties": {"text": {"type": "string", "description": "Some text"}},
             "required": []
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert_eq!(result.args.len(), 1);
         let arg = find_arg(&result.args, "text").expect("--text must exist");
         assert_eq!(arg.get_id(), "text");
@@ -478,7 +486,7 @@ mod tests {
             "properties": {"count": {"type": "integer"}},
             "required": ["count"]
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "count").expect("--count must exist");
         assert!(arg.is_required_set());
     }
@@ -488,7 +496,7 @@ mod tests {
         let schema = json!({
             "properties": {"rate": {"type": "number"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(find_arg(&result.args, "rate").is_some());
     }
 
@@ -500,7 +508,7 @@ mod tests {
                 "items": {"type": "array"}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(find_arg(&result.args, "data").is_some());
         assert!(find_arg(&result.args, "items").is_some());
     }
@@ -510,7 +518,7 @@ mod tests {
         let schema = json!({
             "properties": {"input_file": {"type": "string"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         // Flag long name must be "input-file".
         assert!(find_arg(&result.args, "input-file").is_some());
         // Arg id must be "input_file" (original name, for collect_input lookup).
@@ -523,7 +531,7 @@ mod tests {
         let schema = json!({
             "properties": {"config_file": {"type": "string"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "config-file").expect("must exist");
         let _ = arg; // Exact parser check is implementation-dependent.
     }
@@ -533,7 +541,7 @@ mod tests {
         let schema = json!({
             "properties": {"report": {"type": "string", "x-cli-file": true}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(find_arg(&result.args, "report").is_some());
     }
 
@@ -542,7 +550,7 @@ mod tests {
         let schema = json!({
             "properties": {"x": {"type": "foobar"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(find_arg(&result.args, "x").is_some());
     }
 
@@ -551,7 +559,7 @@ mod tests {
         let schema = json!({
             "properties": {"x": {"description": "no type field"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(find_arg(&result.args, "x").is_some());
     }
 
@@ -560,7 +568,7 @@ mod tests {
         let schema = json!({
             "properties": {"timeout": {"type": "integer", "default": 30}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "timeout").unwrap();
         assert_eq!(
             arg.get_default_values().first().and_then(|v| v.to_str()),
@@ -694,7 +702,7 @@ mod tests {
         let schema = json!({
             "properties": {"log_output": {"type": "boolean"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(
             find_arg(&result.args, "log-output").is_some(),
             "--log-output must be present"
@@ -710,7 +718,7 @@ mod tests {
         let schema = json!({
             "properties": {"log_output": {"type": "boolean"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let pos_arg = find_arg(&result.args, "log-output").unwrap();
         let neg_arg = find_arg(&result.args, "no-log-output").unwrap();
         assert!(matches!(pos_arg.get_action(), clap::ArgAction::SetTrue));
@@ -722,7 +730,7 @@ mod tests {
         let schema = json!({
             "properties": {"debug": {"type": "boolean"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let pair = result.bool_pairs.iter().find(|p| p.prop_name == "debug");
         assert!(pair.is_some());
         assert!(
@@ -736,7 +744,7 @@ mod tests {
         let schema = json!({
             "properties": {"enabled": {"type": "boolean", "default": true}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let pair = result
             .bool_pairs
             .iter()
@@ -753,7 +761,7 @@ mod tests {
         let schema = json!({
             "properties": {"skip_writes": {"type": "boolean"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let pair = result
             .bool_pairs
             .iter()
@@ -774,7 +782,7 @@ mod tests {
         let schema = json!({
             "properties": {"skip_writes": {"type": "boolean"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(
             find_arg(&result.args, "skip-writes").is_some(),
             "--skip-writes"
@@ -790,7 +798,7 @@ mod tests {
         let schema = json!({
             "properties": {"strict": {"type": "boolean", "enum": [true]}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(find_arg(&result.args, "strict").is_some());
         assert!(find_arg(&result.args, "no-strict").is_some());
         assert!(!result.enum_maps.contains_key("strict"));
@@ -802,7 +810,7 @@ mod tests {
             "properties": {"active": {"type": "boolean"}},
             "required": ["active"]
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let pos = find_arg(&result.args, "active").unwrap();
         let neg = find_arg(&result.args, "no-active").unwrap();
         assert!(!pos.is_required_set());
@@ -818,7 +826,7 @@ mod tests {
                 "output_type": {"type": "string", "enum": ["json", "csv", "xml"]}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "output-type").expect("--output-type must exist");
         let pvs = arg.get_possible_values();
         let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
@@ -832,7 +840,7 @@ mod tests {
                 "level": {"type": "integer", "enum": [1, 2, 3]}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "level").expect("--level must exist");
         let pvs = arg.get_possible_values();
         let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
@@ -851,7 +859,7 @@ mod tests {
                 "ratio": {"type": "number", "enum": [0.5, 1.0, 1.5]}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "ratio").unwrap();
         let pvs = arg.get_possible_values();
         let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
@@ -865,7 +873,7 @@ mod tests {
                 "flag": {"type": "string", "enum": [true, false]}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "flag").expect("--flag must exist");
         let pvs = arg.get_possible_values();
         let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
@@ -880,7 +888,7 @@ mod tests {
                 "x": {"type": "string", "enum": []}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "x").expect("--x must exist");
         assert!(arg.get_possible_values().is_empty());
         assert!(!result.enum_maps.contains_key("x"));
@@ -893,7 +901,7 @@ mod tests {
                 "output_type": {"type": "string", "enum": ["json", "table"], "default": "json"}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "output-type").unwrap();
         assert_eq!(
             arg.get_default_values().first().and_then(|v| v.to_str()),
@@ -909,7 +917,7 @@ mod tests {
             },
             "required": ["mode"]
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "mode").unwrap();
         assert!(
             !arg.is_required_set(),
@@ -924,7 +932,7 @@ mod tests {
                 "priority": {"type": "integer", "enum": [1, 2, 3]}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         assert!(result.enum_maps.contains_key("priority"));
         let map = &result.enum_maps["priority"];
         assert_eq!(map.len(), 3);
@@ -943,7 +951,7 @@ mod tests {
                 }
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "q").unwrap();
         let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
         assert!(
@@ -963,7 +971,7 @@ mod tests {
                 "q": {"type": "string", "description": "fallback text"}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "q").unwrap();
         let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
         assert!(help.contains("fallback text"));
@@ -977,7 +985,7 @@ mod tests {
                 "q": {"type": "string", "description": long_desc}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "q").unwrap();
         let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
         assert_eq!(
@@ -996,7 +1004,7 @@ mod tests {
                 "q": {"type": "string", "description": desc}
             }
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "q").unwrap();
         let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
         assert_eq!(help.len(), 999);
@@ -1008,7 +1016,7 @@ mod tests {
         let schema = json!({
             "properties": {"q": {"type": "string"}}
         });
-        let result = schema_to_clap_args(&schema).unwrap();
+        let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "q").unwrap();
         assert!(arg.get_help().is_none());
     }
@@ -1021,7 +1029,7 @@ mod tests {
                 "foo-bar": {"type": "string"}
             }
         });
-        let result = schema_to_clap_args(&schema);
+        let result = schema_to_clap_args(&schema, None);
         assert!(
             matches!(result, Err(SchemaParserError::FlagCollision { .. })),
             "expected FlagCollision, got: {result:?}"
@@ -1036,7 +1044,7 @@ mod tests {
                 "my-flag": {"type": "string"}
             }
         });
-        let err = schema_to_clap_args(&schema).unwrap_err();
+        let err = schema_to_clap_args(&schema, None).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("my_flag") || msg.contains("my-flag"));
         assert!(msg.contains("my-flag") || msg.contains("--my-flag"));
@@ -1050,7 +1058,7 @@ mod tests {
                 "beta": {"type": "string"}
             }
         });
-        let result = schema_to_clap_args(&schema);
+        let result = schema_to_clap_args(&schema, None);
         assert!(result.is_ok());
     }
 
@@ -1068,7 +1076,7 @@ mod tests {
         let schema = json!({
             "properties": {"output_type": {"type": "string", "enum": ["json", "csv"]}}
         });
-        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let schema_args = schema_to_clap_args(&schema, None).unwrap();
         let kwargs = make_kwargs(&[("output_type", "json")]);
         let result = reconvert_enum_values(kwargs, &schema_args);
         assert_eq!(result["output_type"], Value::String("json".to_string()));
@@ -1079,7 +1087,7 @@ mod tests {
         let schema = json!({
             "properties": {"level": {"type": "integer", "enum": [1, 2, 3]}}
         });
-        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let schema_args = schema_to_clap_args(&schema, None).unwrap();
         let kwargs = make_kwargs(&[("level", "2")]);
         let result = reconvert_enum_values(kwargs, &schema_args);
         assert_eq!(result["level"], json!(2));
@@ -1091,7 +1099,7 @@ mod tests {
         let schema = json!({
             "properties": {"ratio": {"type": "number", "enum": [0.5, 1.0, 1.5]}}
         });
-        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let schema_args = schema_to_clap_args(&schema, None).unwrap();
         let kwargs = make_kwargs(&[("ratio", "1.5")]);
         let result = reconvert_enum_values(kwargs, &schema_args);
         assert!(result["ratio"].is_number());
@@ -1103,7 +1111,7 @@ mod tests {
         let schema = json!({
             "properties": {"strict": {"type": "string", "enum": [true, false]}}
         });
-        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let schema_args = schema_to_clap_args(&schema, None).unwrap();
         let kwargs = make_kwargs(&[("strict", "true")]);
         let result = reconvert_enum_values(kwargs, &schema_args);
         assert_eq!(result["strict"], Value::Bool(true));
@@ -1114,7 +1122,7 @@ mod tests {
         let schema = json!({
             "properties": {"name": {"type": "string"}}
         });
-        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let schema_args = schema_to_clap_args(&schema, None).unwrap();
         let kwargs = make_kwargs(&[("name", "alice")]);
         let result = reconvert_enum_values(kwargs, &schema_args);
         assert_eq!(result["name"], Value::String("alice".to_string()));
@@ -1125,7 +1133,7 @@ mod tests {
         let schema = json!({
             "properties": {"mode": {"type": "string", "enum": ["a", "b"]}}
         });
-        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let schema_args = schema_to_clap_args(&schema, None).unwrap();
         let mut kwargs: HashMap<String, Value> = HashMap::new();
         kwargs.insert("mode".to_string(), Value::Null);
         let result = reconvert_enum_values(kwargs, &schema_args);
@@ -1137,7 +1145,7 @@ mod tests {
         let schema = json!({
             "properties": {"output_type": {"type": "string", "enum": ["json"]}}
         });
-        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let schema_args = schema_to_clap_args(&schema, None).unwrap();
         let mut kwargs = make_kwargs(&[("output_type", "json")]);
         kwargs.insert("extra".to_string(), Value::String("untouched".to_string()));
         let result = reconvert_enum_values(kwargs, &schema_args);
@@ -1149,7 +1157,7 @@ mod tests {
         for reserved in RESERVED_PROPERTY_NAMES {
             let schema_str = format!(r#"{{"properties": {{"{reserved}": {{"type": "string"}}}}}}"#);
             let schema: Value = serde_json::from_str(&schema_str).unwrap();
-            let result = schema_to_clap_args(&schema);
+            let result = schema_to_clap_args(&schema, None);
             assert!(
                 matches!(result, Err(SchemaParserError::ReservedPropertyName { .. })),
                 "expected ReservedPropertyName error for '{reserved}'"
@@ -1168,7 +1176,7 @@ mod tests {
         );
         let schema: Value =
             serde_json::from_str(r#"{"properties": {"large_input": {"type": "string"}}}"#).unwrap();
-        let result = schema_to_clap_args(&schema);
+        let result = schema_to_clap_args(&schema, None);
         assert!(
             matches!(
                 result,
