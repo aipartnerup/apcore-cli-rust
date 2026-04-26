@@ -13,7 +13,7 @@ async fn test_check_approval_auto_approve_skips_prompt() {
         "module_id": "math.add",
         "annotations": {"requires_approval": true}
     });
-    let result = check_approval(&module_def, true).await;
+    let result = check_approval(&module_def, true, None).await;
     assert!(
         result.is_ok(),
         "expected Ok for auto_approve=true: {result:?}"
@@ -32,7 +32,7 @@ async fn test_check_approval_no_tty_returns_error() {
         "module_id": "math.add",
         "annotations": {"requires_approval": true}
     });
-    let result = check_approval(&module_def, false).await;
+    let result = check_approval(&module_def, false, None).await;
     assert!(
         matches!(result, Err(ApprovalError::NonInteractive { .. })),
         "expected NonInteractive error, got {:?}",

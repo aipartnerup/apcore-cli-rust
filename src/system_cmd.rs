@@ -298,7 +298,11 @@ pub(crate) fn require_approval_for_system_command(module_id: &str, auto_approve:
     });
     let result = match tokio::runtime::Handle::try_current() {
         Ok(handle) => tokio::task::block_in_place(|| {
-            handle.block_on(crate::approval::check_approval(&module_def, auto_approve))
+            handle.block_on(crate::approval::check_approval(
+                &module_def,
+                auto_approve,
+                None,
+            ))
         }),
         Err(_) => {
             eprintln!("Error: no async runtime available for approval check");

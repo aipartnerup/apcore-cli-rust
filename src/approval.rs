@@ -263,7 +263,14 @@ pub async fn check_approval_with_tty_timeout(
 /// Bypasses the prompt if `auto_approve` is `true` or the env var
 /// `APCORE_CLI_AUTO_APPROVE` is set to exactly `"1"`.
 /// Returns `Err(ApprovalError::NonInteractive)` if stdin is not a TTY.
-/// Otherwise prompts the user with a 60-second timeout.
+/// Otherwise prompts the user with a per-call timeout.
+///
+/// `timeout` accepts `Option<u64>` for cross-SDK parity with Python and TS,
+/// which both expose `(module_def, auto_approve, timeout)` 3-arg signatures.
+/// `None` falls back to [`DEFAULT_APPROVAL_TIMEOUT_SECS`]; `Some(n)` selects
+/// an explicit window. Internally delegates to
+/// [`check_approval_with_timeout`] (Rust convention: `_with_*` suffix for the
+/// concrete-parameter variant).
 ///
 /// # Errors
 /// * `ApprovalError::NonInteractive` — stdin is not an interactive terminal
@@ -272,8 +279,10 @@ pub async fn check_approval_with_tty_timeout(
 pub async fn check_approval(
     module_def: &serde_json::Value,
     auto_approve: bool,
+    timeout: Option<u64>,
 ) -> Result<(), ApprovalError> {
-    check_approval_with_timeout(module_def, auto_approve, DEFAULT_APPROVAL_TIMEOUT_SECS).await
+    let secs = timeout.unwrap_or(DEFAULT_APPROVAL_TIMEOUT_SECS);
+    check_approval_with_timeout(module_def, auto_approve, secs).await
 }
 
 /// Configurable-timeout variant of [`check_approval`]. Resolve the timeout
@@ -499,14 +508,18 @@ mod tests {
 
     #[tokio::test]
     async fn skip_when_requires_approval_false() {
-        let result =
-            check_approval(&json!({"annotations": {"requires_approval": false}}), false).await;
+        let result = check_approval(
+            &json!({"annotations": {"requires_approval": false}}),
+            false,
+            None,
+        )
+        .await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn skip_when_no_annotations() {
-        let result = check_approval(&json!({}), false).await;
+        let result = check_approval(&json!({}), false, None).await;
         assert!(result.is_ok());
     }
 
@@ -515,6 +528,7 @@ mod tests {
         let result = check_approval(
             &json!({"annotations": {"requires_approval": "true"}}),
             false,
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -522,8 +536,21 @@ mod tests {
 
     #[tokio::test]
     async fn bypass_auto_approve_true() {
-        let result = check_approval(&module(true), true).await;
+        let result = check_approval(&module(true), true, None).await;
         assert!(result.is_ok(), "auto_approve=true must bypass");
+    }
+
+    #[tokio::test]
+    async fn explicit_timeout_some_delegates_to_with_timeout() {
+        // Some(0) is the strongest evidence the timeout argument is wired
+        // through to check_approval_with_timeout — a 0-second timeout would
+        // immediately time out an actual TTY prompt. Bypass via auto_approve
+        // so this test does not need a TTY.
+        let result = check_approval(&module(true), true, Some(0)).await;
+        assert!(
+            result.is_ok(),
+            "auto_approve must bypass before timeout matters"
+        );
     }
 
     #[test]
@@ -531,7 +558,7 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap();
         unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(check_approval(&module(true), false));
+        let result = rt.block_on(check_approval(&module(true), false, None));
         unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
         assert!(result.is_ok(), "APCORE_CLI_AUTO_APPROVE=1 must bypass");
     }
@@ -541,7 +568,7 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap();
         unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(check_approval(&module(true), true));
+        let result = rt.block_on(check_approval(&module(true), true, None));
         unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
         assert!(result.is_ok());
     }

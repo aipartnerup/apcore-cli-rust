@@ -36,7 +36,7 @@ async fn all_approval_errors_map_to_exit_46() {
 async fn module_without_requires_approval_skips_gate() {
     // No annotations field → gate must return Ok immediately.
     let module_def = json!({"module_id": "open-module"});
-    let result = apcore_cli::approval::check_approval(&module_def, false).await;
+    let result = apcore_cli::approval::check_approval(&module_def, false, None).await;
     assert!(result.is_ok());
 }
 
@@ -46,7 +46,7 @@ async fn module_with_requires_approval_false_skips_gate() {
         "module_id": "open-module",
         "annotations": {"requires_approval": false}
     });
-    let result = apcore_cli::approval::check_approval(&module_def, false).await;
+    let result = apcore_cli::approval::check_approval(&module_def, false, None).await;
     assert!(result.is_ok());
 }
 
@@ -56,7 +56,7 @@ async fn module_with_auto_approve_true_skips_gate() {
         "module_id": "guarded-module",
         "annotations": {"requires_approval": true}
     });
-    let result = apcore_cli::approval::check_approval(&module_def, true).await;
+    let result = apcore_cli::approval::check_approval(&module_def, true, None).await;
     assert!(result.is_ok());
 }
 
@@ -73,6 +73,6 @@ async fn module_non_tty_no_bypass_returns_approval_error() {
         "module_id": "guarded-module",
         "annotations": {"requires_approval": true}
     });
-    let result = apcore_cli::approval::check_approval(&module_def, false).await;
+    let result = apcore_cli::approval::check_approval(&module_def, false, None).await;
     assert!(matches!(result, Err(ApprovalError::NonInteractive { .. })));
 }
