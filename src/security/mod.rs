@@ -6,7 +6,7 @@ pub mod auth;
 pub mod config_encryptor;
 pub mod sandbox;
 
-pub use audit::AuditLogger;
+pub use audit::{AuditLogError, AuditLogger};
 pub use auth::{AuthProvider, AuthenticationError};
 pub use config_encryptor::{ConfigDecryptionError, ConfigEncryptor};
 pub use sandbox::{ModuleExecutionError, ModuleNotFoundError, Sandbox, SchemaValidationError};

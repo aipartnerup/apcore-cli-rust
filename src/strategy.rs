@@ -53,7 +53,7 @@ pub fn describe_pipeline_command() -> Command {
 }
 
 /// Register the describe-pipeline subcommand on the root command.
-pub(crate) fn register_pipeline_command(cli: Command) -> Command {
+pub fn register_pipeline_command(cli: Command) -> Command {
     cli.subcommand(describe_pipeline_command())
 }
 

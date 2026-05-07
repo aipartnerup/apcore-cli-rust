@@ -386,6 +386,7 @@ impl ApprovalResult {
 /// `check_approval` / `check_approval_with_timeout` continue to return
 /// `Result<(), ApprovalError>` for callers that prefer typed-error
 /// semantics in pure Rust code.
+#[derive(Debug, Clone)]
 pub struct CliApprovalHandler {
     /// Auto-approve without prompting the user.
     pub auto_approve: bool,
@@ -478,6 +479,83 @@ impl CliApprovalHandler {
     pub async fn check_approval(&self, module_def: &serde_json::Value) -> ApprovalResult {
         self.request_approval(module_def).await
     }
+}
+
+// ---------------------------------------------------------------------------
+// apcore::ApprovalHandler protocol adapter (A-D-002 fix)
+// ---------------------------------------------------------------------------
+//
+// Wires `CliApprovalHandler` into `apcore::Executor::set_approval_handler` so
+// any approval gate raised inside the apcore pipeline (e.g. via
+// `approval_gate` middleware) consults the same TTY-aware prompt the CLI
+// uses on the standalone `dispatch_module` path. Achieves Python/TS parity:
+// `factory.py:322` calls `executor.set_approval_handler(handler)` and
+// `main.ts:357` does the equivalent.
+//
+// The adapter bridges three impedance mismatches between the CLI handler
+// and the apcore protocol trait:
+//   1. apcore passes an `ApprovalRequest` (module_id + annotations) — we
+//      reconstruct the `serde_json::Value` shape `CliApprovalHandler`
+//      expects.
+//   2. apcore expects `Result<apcore::ApprovalResult, ModuleError>` — we
+//      translate the CLI's typed enum into the protocol shape with the
+//      canonical status strings (`"approved"`, `"rejected"`, `"timeout"`).
+//   3. apcore's `check_approval` accepts an approval-id (Phase B resume
+//      lookup); we have no Phase B state, so we return a synthetic rejected
+//      result — matching the documented `CallbackApprovalHandler` default.
+
+#[async_trait::async_trait]
+impl apcore::ApprovalHandler for CliApprovalHandler {
+    async fn request_approval(
+        &self,
+        request: &apcore::ApprovalRequest,
+    ) -> Result<apcore::ApprovalResult, apcore::ModuleError> {
+        // Reconstruct the module-def shape the CLI handler expects.
+        // `requires_approval` is reflected from the apcore request so a
+        // module with the annotation cleared still bypasses the prompt.
+        let module_def = serde_json::json!({
+            "module_id": request.module_id,
+            "annotations": {
+                "requires_approval": request.annotations.requires_approval,
+            },
+            "description": request.description,
+        });
+
+        let cli_result = self.request_approval(&module_def).await;
+        Ok(cli_to_apcore_result(cli_result))
+    }
+
+    async fn check_approval(
+        &self,
+        _approval_id: &str,
+    ) -> Result<apcore::ApprovalResult, apcore::ModuleError> {
+        // Phase B resume is not implemented for the CLI handler; mirror
+        // CallbackApprovalHandler's default of "rejected".
+        // `apcore::ApprovalResult` is `#[non_exhaustive]` so we can only
+        // construct it via `Default::default()` + field mutation.
+        let mut result = apcore::ApprovalResult::default();
+        result.status = "rejected".to_string();
+        result.reason = Some("CLI handler does not support Phase B resume".to_string());
+        Ok(result)
+    }
+}
+
+/// Translate a CLI `ApprovalResult` into the apcore protocol shape.
+///
+/// `apcore::ApprovalResult` is `#[non_exhaustive]` (issue #24), so we
+/// construct via `Default::default()` and mutate fields rather than using
+/// struct-literal syntax.
+fn cli_to_apcore_result(r: ApprovalResult) -> apcore::ApprovalResult {
+    let status = match r.status {
+        ApprovalStatus::Approved => "approved",
+        ApprovalStatus::Rejected => "rejected",
+        ApprovalStatus::Timeout => "timeout",
+    };
+    let mut result = apcore::ApprovalResult::default();
+    result.status = status.to_string();
+    result.approved_by = r.approved_by;
+    result.reason = r.reason;
+    result
 }
 
 // Type aliases so callers can match by variant-like name (parity with Python/TS).
@@ -999,5 +1077,69 @@ mod tests {
         let request_result = handler.request_approval(&module(true)).await;
         let check_result = handler.check_approval(&module(true)).await;
         assert_eq!(request_result, check_result);
+    }
+
+    // --- A-D-002: apcore::ApprovalHandler trait impl ---
+
+    #[tokio::test]
+    async fn apcore_handler_trait_request_approval_auto_approves() {
+        // CliApprovalHandler must satisfy `apcore::ApprovalHandler` so it
+        // can be wired through `executor.set_approval_handler`. With
+        // `auto_approve=true` and `requires_approval=true`, the apcore
+        // adapter must return `status: "approved"` to the executor.
+        let handler = CliApprovalHandler::new(/*auto_approve*/ true, 60);
+        let mut req = apcore::ApprovalRequest::default();
+        req.module_id = "test.module".to_string();
+        req.annotations.requires_approval = true;
+        let result =
+            <CliApprovalHandler as apcore::ApprovalHandler>::request_approval(&handler, &req)
+                .await
+                .expect("apcore handler must return Ok");
+        assert_eq!(result.status, "approved");
+        assert_eq!(result.approved_by.as_deref(), Some("auto_approve"));
+    }
+
+    #[tokio::test]
+    async fn apcore_handler_trait_request_approval_skips_when_no_annotation() {
+        // If the module's annotations indicate no approval is required, the
+        // adapter should return "approved" with reason "not_required" —
+        // i.e. defer to the CLI handler's existing bypass logic.
+        let handler = CliApprovalHandler::new(false, 60);
+        let mut req = apcore::ApprovalRequest::default();
+        req.module_id = "test.module".to_string();
+        req.annotations.requires_approval = false;
+        let result =
+            <CliApprovalHandler as apcore::ApprovalHandler>::request_approval(&handler, &req)
+                .await
+                .expect("apcore handler must return Ok");
+        assert_eq!(result.status, "approved");
+        assert_eq!(result.approved_by.as_deref(), Some("not_required"));
+    }
+
+    #[tokio::test]
+    async fn apcore_handler_trait_check_approval_returns_rejected() {
+        // Phase B resume is unsupported by the CLI handler — protocol
+        // method `check_approval(approval_id)` returns rejected.
+        let handler = CliApprovalHandler::new(false, 60);
+        let result =
+            <CliApprovalHandler as apcore::ApprovalHandler>::check_approval(&handler, "any-id")
+                .await
+                .expect("apcore handler must return Ok");
+        assert_eq!(result.status, "rejected");
+    }
+
+    #[test]
+    fn cli_to_apcore_result_maps_all_statuses() {
+        let approved = cli_to_apcore_result(ApprovalResult::approved_via("tty_user"));
+        assert_eq!(approved.status, "approved");
+        assert_eq!(approved.approved_by.as_deref(), Some("tty_user"));
+
+        let rejected = cli_to_apcore_result(ApprovalResult::rejected("nope"));
+        assert_eq!(rejected.status, "rejected");
+        assert_eq!(rejected.reason.as_deref(), Some("nope"));
+
+        let timeout = cli_to_apcore_result(ApprovalResult::timed_out("expired"));
+        assert_eq!(timeout.status, "timeout");
+        assert_eq!(timeout.reason.as_deref(), Some("expired"));
     }
 }

@@ -198,26 +198,31 @@ pub fn cmd_list_enhanced(
     }
 
     // F7: Sort. The clap value_parser accepts ["id", "calls", "errors",
-    // "latency"] for cross-SDK parity (D11-006). Usage-based sorts require
-    // system.usage modules registered in the registry; they are not wired
-    // yet, so we emit a runtime warning and fall back to id, matching
-    // Python's logger.warning at apcore-cli-python/src/apcore_cli/discovery.py:206.
+    // "latency"] for cross-SDK parity (D11-006). Usage-based sorts read
+    // aggregates from the local audit log via `system_usage` (issue #17);
+    // when the log has no entries in the 24h window the helper falls back
+    // to id-sort and we emit a visible note (not just tracing::warn) to
+    // stderr so users see the fallback.
     let requested_sort = opts.sort.unwrap_or("id");
-    if requested_sort != "id" {
-        tracing::warn!(
-            "Usage data unavailable; --sort {} ignored, sorting by id.",
-            requested_sort
-        );
-    }
-    modules.sort_by(|a, b| {
-        let aid = a.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
-        let bid = b.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
-        aid.cmp(bid)
-    });
-
-    // F7: Reverse sort.
-    if opts.reverse {
-        modules.reverse();
+    if matches!(requested_sort, "calls" | "errors" | "latency") {
+        let used =
+            crate::system_usage::sort_modules_by_usage(&mut modules, requested_sort, !opts.reverse);
+        if !used {
+            eprintln!(
+                "note: no usage data available for --sort {}; sorted by id. \
+Run some modules first to populate ~/.apcore-cli/audit.jsonl.",
+                requested_sort
+            );
+        }
+    } else {
+        modules.sort_by(|a, b| {
+            let aid = a.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
+            let bid = b.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
+            aid.cmp(bid)
+        });
+        if opts.reverse {
+            modules.reverse();
+        }
     }
 
     let fmt = crate::output::resolve_format(opts.explicit_format);
@@ -273,19 +278,19 @@ pub fn cmd_describe(
 
 /// Attach the `list` subcommand to the given command (typically the `apcli`
 /// group). Returns the command with the subcommand added.
-pub(crate) fn register_list_command(cli: Command) -> Command {
+pub fn register_list_command(cli: Command) -> Command {
     cli.subcommand(list_command())
 }
 
 /// Attach the `describe` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub(crate) fn register_describe_command(cli: Command) -> Command {
+pub fn register_describe_command(cli: Command) -> Command {
     cli.subcommand(describe_command())
 }
 
 /// Attach the `exec` subcommand to the given command. Delegates to
 /// [`crate::cli::exec_command`] to avoid duplicating the builder.
-pub(crate) fn register_exec_command(cli: Command) -> Command {
+pub fn register_exec_command(cli: Command) -> Command {
     cli.subcommand(crate::cli::exec_command())
 }
 

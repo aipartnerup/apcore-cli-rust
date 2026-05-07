@@ -7,37 +7,37 @@ use std::io::IsTerminal;
 
 /// Attach the `health` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub(crate) fn register_health_command(cli: Command) -> Command {
+pub fn register_health_command(cli: Command) -> Command {
     cli.subcommand(health_command())
 }
 
 /// Attach the `usage` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub(crate) fn register_usage_command(cli: Command) -> Command {
+pub fn register_usage_command(cli: Command) -> Command {
     cli.subcommand(usage_command())
 }
 
 /// Attach the `enable` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub(crate) fn register_enable_command(cli: Command) -> Command {
+pub fn register_enable_command(cli: Command) -> Command {
     cli.subcommand(enable_command())
 }
 
 /// Attach the `disable` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub(crate) fn register_disable_command(cli: Command) -> Command {
+pub fn register_disable_command(cli: Command) -> Command {
     cli.subcommand(disable_command())
 }
 
 /// Attach the `reload` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub(crate) fn register_reload_command(cli: Command) -> Command {
+pub fn register_reload_command(cli: Command) -> Command {
     cli.subcommand(reload_command())
 }
 
 /// Attach the `config` subcommand group to the given command. Returns the
 /// command with the subcommand added.
-pub(crate) fn register_config_command(cli: Command) -> Command {
+pub fn register_config_command(cli: Command) -> Command {
     cli.subcommand(config_command())
 }
 

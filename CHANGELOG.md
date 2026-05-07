@@ -4,6 +4,60 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.8.0] - 2026-05-07
+
+### Changed
+
+- **Dependency bump**: `apcore = "=0.21.0"` (was `=0.19.0`) and the optional
+  `apcore-toolkit = "=0.6.0"` (was `=0.5.0`). Aligns with upstream
+  `apcore 0.21.0` (`Module::preview` / `PreflightResult::predicted_changes`)
+  and `apcore-toolkit 0.6.0` (surface-aware formatters). No CLI-visible
+  behavioural breaks.
+
+### Added
+
+- **Issue #17 — `system_usage` aggregator + `list --sort calls|errors|latency`**:
+  new module `src/system_usage.rs` reads `~/.apcore-cli/audit.jsonl`, filters
+  by period (default 24h), and returns per-module aggregates (`calls`,
+  `errors`, `avg latency_ms`). `list --sort {calls,errors,latency}` now
+  consults the aggregator instead of falling back to id-sort with a buried
+  `tracing::warn!`. When the audit log has no entries in the period window
+  the discovery layer prints a user-visible note to stderr
+  (`note: no usage data available for --sort <field>; sorted by id. ...`)
+  and falls back to id-sort. Module-protocol registration of
+  `system.usage.summary` / `system.usage.module` as registry-callable
+  built-ins is tracked as a follow-up — today the readers are invoked
+  directly by the discovery layer.
+- New file: `src/system_usage.rs`.
+
+- **Issue #18 + #19 — Rust parity**: new `pub fn create_cli_with(extensions_dir,
+  prog_name, host_version, host_description) -> clap::Command` lives in the
+  binary entry point (`src/main.rs`) — embedding API is BIN-only in v0.8
+  pending the post-D9 redesign. `host_version=Some(v)` overrides
+  `-V/--version`; `host_description=Some(d)` overrides the top-level
+  `--help` "About" line. **Issue #18 opt-in semantics:** when
+  `host_version` is `None`, `--version` is NOT registered — embedded callers
+  no longer leak the SDK's own `CARGO_PKG_VERSION`. The standalone
+  `apcore-cli` binary explicitly passes
+  `Some(env!("CARGO_PKG_VERSION").to_string())` so its `--version` flag
+  remains wired. When `host_description` is omitted, the surface defaults to
+  `f"{prog_name} CLI"`. Rationale: the embedding API was removed in v0.7.0
+  (D9-001/D9-002), but parameterizing the builder now means downstream Rust
+  hosts experimenting with `apcore-cli` as a library do not have to fork
+  the crate, and the re-introduced embedding API can route through this
+  seam without further signature churn.
+- **Issue #19 — debrand standalone help strings**: the top-level `--help`
+  description, the `apcli` subgroup description, the `--verbose` option
+  text, the root `after_help` footer, and the per-module verbose-hint footer
+  in `cli.rs` no longer hard-code "apcore" in their phrasing. The
+  description defaults to `f"{prog_name} CLI"` (matches TS / Python), and
+  the four `(including built-in apcore options)` strings drop the trailing
+  `apcore`. Standalone bin still uses the SDK package name for `prog_name`
+  by default, so the public `apcore-cli --help` output is unchanged in
+  spirit; downstream hosts now get a neutral surface out of the box.
+
+---
+
 ## [0.7.0] - 2026-04-25
 
 ### Removed

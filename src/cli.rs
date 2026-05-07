@@ -447,7 +447,7 @@ pub fn build_module_command_with_limit(
     if hide {
         footer_parts.push(
             "Use --verbose to show all options \
-             (including built-in apcore options)."
+             (including built-in options)."
                 .to_string(),
         );
     }

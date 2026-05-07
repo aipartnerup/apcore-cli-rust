@@ -48,7 +48,7 @@ Terminal adapter for apcore. Execute AI-Perceivable modules from the command lin
 cargo install apcore-cli
 ```
 
-Requires Rust 1.75+ and `apcore = 0.17.1` (exact pin).
+Requires Rust 1.75+ and `apcore = 0.21.0` (exact pin). The optional `toolkit` feature pulls in `apcore-toolkit = 0.6.0`.
 
 ## Quick Start
 
@@ -103,45 +103,49 @@ All modules are auto-discovered. CLI flags are auto-generated from each module's
 
 The high-level embedding API (`CliConfig` / `run_with_config`) was removed in
 v0.7.0 (audit findings D9-001/002) — the previous stub never had a working
-dispatch loop. A real embedding API will be reintroduced when implemented.
-Until then, downstream crates can pull individual building blocks
-(`FsDiscoverer`, `RegistryProvider`, `ExposureFilter`,
-`GroupedModuleGroup`, the per-subcommand `register_*` helpers) and assemble
-their own root command tree, or simply invoke the `apcli` binary directly.
+dispatch loop. A real embedding API will be reintroduced as part of the
+post-D9 redesign. In v0.8.0 the parameterised builders `create_cli` /
+`create_cli_with` (issues #18 / #19) live **in the binary entry point**
+(`src/main.rs`) — they are NOT yet exported from the library crate root.
+Until that move is finished, downstream crates can pull individual
+building blocks (`FsDiscoverer`, `RegistryProvider`, `ExposureFilter`, the
+per-subcommand `register_*_command` helpers, and the umbrella
+`register_apcli_subcommands`) and assemble their own root command tree, or
+simply invoke the `apcli` binary directly.
 
 ### Exposure Filtering (FE-12)
 
-`apcore-cli` supports declarative module exposure filtering via `ExposureFilter`.
-Filtering is applied via a builder method on `GroupedModuleGroup` -- construct
-the group first, then attach the filter:
+`apcore-cli` ships an `ExposureFilter` primitive that downstream embedders
+can apply when building their own command tree. The previous
+`GroupedModuleGroup::with_exposure_filter` builder was removed in v0.7.0
+together with the `LazyModuleGroup` / `GroupedModuleGroup` types
+(D9-001/002). For v0.8.0 the supported entry points are:
+
+- **Standalone binary:** declarative configuration via `apcore.yaml` or the
+  `APCORE_CLI_EXPOSE_MODE` / `APCORE_CLI_EXPOSE_INCLUDE` /
+  `APCORE_CLI_EXPOSE_EXCLUDE` environment variables.
+- **Library:** instantiate `ExposureFilter::new(...)` /
+  `ExposureFilter::from_config(...)` and apply it manually when iterating
+  the registry to decide which modules to register on your `clap::Command`.
 
 ```rust
-use apcore_cli::{ExposureFilter, GroupedModuleGroup};
-use std::sync::Arc;
+use apcore_cli::ExposureFilter;
 
-// Option 1: construct ExposureFilter directly (mode, include patterns, exclude patterns)
-let filter = ExposureFilter::new(
-    "include",
-    &["admin.*".to_string()],
-    &[],
-);
+// Construct directly (mode, include patterns, exclude patterns).
+let filter = ExposureFilter::new("include", &["admin.*".to_string()], &[]);
 
-// Option 2: load from a JSON config value
+// Or load from a JSON config value.
 let cfg = serde_json::json!({
     "mode": "exclude",
     "exclude": ["debug.*", "test.*"]
 });
 let filter = ExposureFilter::from_config(&cfg).expect("valid exposure config");
-
-// Wire the filter into the grouped module group
-let group = GroupedModuleGroup::new(registry.clone(), executor.clone(), 1000)
-    .with_exposure_filter(filter);
-
-// Then continue building your clap::Command from the group...
 ```
 
-> **Note:** Exposure filtering must be wired via `GroupedModuleGroup::with_exposure_filter`.
-> See CHANGELOG 0.6.0 / FE-12 for background.
+> **Note:** A library-side wiring helper that re-applies the filter onto a
+> root command is being redesigned per the D9 follow-up — see CHANGELOG
+> 0.7.0. For v0.8.0, prefer the standalone binary's declarative config in
+> `apcore.yaml`.
 
 ## Integration with Existing Projects
 
@@ -231,7 +235,7 @@ apcore-cli ships with 13 built-in subcommands, all reachable under the reserved 
 
 | Command | Description | Source |
 |---------|-------------|--------|
-| `init` | Scaffold a new extensions directory with example modules | `init_cmd` |
+| `init module <id>` | Scaffold a new module under the extensions directory | `init_cmd` |
 | `describe-pipeline <pipeline_id>` | Show pipeline execution strategy and stage trace | `strategy` |
 
 **Shell integration**
@@ -360,7 +364,7 @@ User / AI Agent (terminal)
 apcore-cli (the adapter)
     |
     +-- ConfigResolver       4-tier config precedence
-    +-- LazyModuleGroup      Dynamic clap command generation
+    +-- ApcliGroup           FE-13 built-in command group (`apcli` namespace)
     +-- SchemaParser         JSON Schema -> clap options
     +-- RefResolver          $ref / allOf / anyOf / oneOf
     +-- ApprovalGate         TTY-aware HITL approval (tokio::select!)
@@ -374,36 +378,29 @@ apcore Registry + Executor (your modules, unchanged)
 
 ## API Overview
 
-The following items are re-exported at the crate root (`apcore_cli::*`). Everything else lives under its module path (e.g. `apcore_cli::cli::LazyModuleGroup`).
+The following items are re-exported at the crate root (`apcore_cli::*`). Everything else lives under its module path (e.g. `apcore_cli::approval::DEFAULT_APPROVAL_TIMEOUT_SECS`). Per audit D9-005 the public surface was trimmed from ~110 to ~40 curated items in v0.6.x; the canonical source of truth is `src/lib.rs:150-232`.
 
 ### Structs
 
-`GroupedModuleGroup`, `ExposureFilter`, `ConfigResolver`, `AuditLogger`, `AuthProvider`, `ConfigEncryptor`, `Sandbox`, `CliApprovalHandler`, `FsDiscoverer`, `ApCoreRegistryProvider`, `ListOptions`, `SchemaArgs`, `BoolFlagPair`.
-
-> Note: `LazyModuleGroup` is **not** re-exported at the crate root -- access it as `apcore_cli::cli::LazyModuleGroup`.
+`ApprovalResult`, `ApprovalStatus`, `CliApprovalHandler`, `ApcliGroup`, `ApcliConfig`, `ApcliMode`, `ConfigResolver`, `ApCoreRegistryProvider`, `ListOptions`, `ExposureFilter`, `FsDiscoverer`, `BoolFlagPair`, `SchemaArgs`, `AuditLogger`, `AuthProvider`, `ConfigEncryptor`, `Sandbox`.
 
 ### Functions
 
 Organized by source module:
 
-- **`approval::`** `check_approval`, `check_approval_with_tty`
-- **`cli::`** `set_verbose_help`, `is_verbose_help`, `set_docs_url`, `get_docs_url`, `set_executables`, `set_audit_logger`, `exec_command`, `build_module_command`, `build_module_command_with_limit`, `collect_input`, `collect_input_from_reader`, `validate_module_id`, `dispatch_module`
-- **`discovery::`** `validate_tag`, `cmd_list`, `cmd_list_enhanced`, `cmd_describe`
-  - Per-subcommand registrars (v0.7+, preferred): `register_list_command`, `register_describe_command`, `register_exec_command`, `register_validate_command`
-  - Batch shim (deprecated, use per-subcommand registrars): `register_discovery_commands`
+- **`approval::`** `check_approval` (re-exported); `check_approval_with_timeout`, `check_approval_with_tty`, `check_approval_with_tty_timeout`, `DEFAULT_APPROVAL_TIMEOUT_SECS` (module-path access)
+- **`cli::`** `set_verbose_help`, `is_verbose_help`, `set_docs_url`, `get_docs_url`, `set_executables`, `set_audit_logger`, `build_module_command`, `build_module_command_with_limit`, `collect_input`, `collect_input_from_reader`, `validate_module_id`, `dispatch_module`
+- **`discovery::`** `cmd_list`, `cmd_list_enhanced`, `cmd_describe`, `register_list_command`, `register_describe_command`, `register_exec_command`, `register_discovery_commands`
 - **`display_helpers::`** `get_display`, `get_cli_display_fields`
-- **`exposure::`** `glob_match`
-- **`init_cmd::`** `init_command`, `handle_init`
-- **`output::`** `resolve_format`, `format_module_list`, `format_module_list_with_deps`, `format_module_detail`, `format_exec_result`
+- **`init_cmd::`** `init_command`, `handle_init`, `register_init_command`
+- **`output::`** `resolve_format`, `format_module_list`, `format_module_detail`, `format_exec_result`
 - **`ref_resolver::`** `resolve_refs`
-- **`schema_parser::`** `prop_name_to_flag_name`, `extract_help_with_limit`, `map_type`, `schema_to_clap_args`, `schema_to_clap_args_with_limit`, `reconvert_enum_values`
-- **`shell::`** `register_completion_command`, `completion_command`, `cmd_completion`, `man_command`, `build_synopsis`, `generate_man_page`, `cmd_man`, `has_man_flag`, `build_program_man_page`, `generate_grouped_bash_completion`, `generate_grouped_zsh_completion`, `generate_grouped_fish_completion`
-  - Batch shim (deprecated): `register_shell_commands`
-- **`strategy::`** `describe_pipeline_command`, `register_pipeline_command`, `dispatch_describe_pipeline`
-- **`system_cmd::`** `dispatch_health`, `dispatch_usage`, `dispatch_enable`, `dispatch_disable`, `dispatch_reload`, `dispatch_config`
-  - Per-subcommand registrars (v0.7+, preferred): `register_health_command`, `register_usage_command`, `register_enable_command`, `register_disable_command`, `register_reload_command`, `register_config_command`
-  - Batch shim (deprecated): `register_system_commands`
-- **`validate::`** `validate_command`, `register_validate_command`, `dispatch_validate`, `format_preflight_result`
+- **`schema_parser::`** `extract_help_with_limit`, `schema_to_clap_args`, `schema_to_clap_args_with_limit`, `reconvert_enum_values`, `HELP_TEXT_MAX_LEN`, `RESERVED_PROPERTY_NAMES`
+- **`shell::`** `register_completion_command`, `register_man_command`, `completion_command`, `cmd_completion`, `cmd_man`, `has_man_flag`, `build_program_man_page`
+- **`strategy::`** `register_pipeline_command`, `dispatch_describe_pipeline`
+- **`system_cmd::`** `dispatch_health`, `dispatch_usage`, `dispatch_enable`, `dispatch_disable`, `dispatch_reload`, `dispatch_config`, `register_health_command`, `register_usage_command`, `register_enable_command`, `register_disable_command`, `register_reload_command`, `register_config_command`, `SYSTEM_COMMANDS`
+- **`validate::`** `register_validate_command`, `dispatch_validate`, `format_preflight_result`
+- **Crate root** `register_apcli_subcommands` — umbrella composer that registers all 13 FE-13 built-in subcommands onto an `apcli` group.
 
 ### Traits
 
@@ -411,17 +408,19 @@ Organized by source module:
 
 ### Errors
 
-Each module defines its own `thiserror::Error` enum rather than a single catch-all type:
+Each module defines its own `thiserror::Error` enum rather than a single catch-all type. Eleven error enums are exported:
 
-- `ApprovalError` -- `Denied` / `NonInteractive` / `Timeout`
-- `CliError` -- `InvalidModuleId` / `ReservedModuleId` / `StdinRead` / `JsonParse` / `InputTooLarge` / `NotAnObject`
+- `ApprovalError` -- `Denied` / `NonInteractive` / `Timeout` (also aliased as `ApprovalDeniedError` / `ApprovalTimeoutError`)
+- `ApcliGroupError` -- visibility-config validation errors (FE-13)
+- `CliError` -- `InvalidModuleId` / `ReservedModuleId` / `StdinRead` / `JsonParse` / `InputTooLarge` / `NotAnObject` / `SchemaRefResolution`
 - `DiscoveryError` -- `ModuleNotFound` / `InvalidModuleId` / `InvalidTag`
-- `SchemaParserError` -- `FlagCollision`
 - `RefResolverError` -- `Unresolvable` / `Circular` / `MaxDepthExceeded`
+- `SchemaParserError` -- `FlagCollision`
 - `ShellError` -- `UnknownCommand`
 - `AuthenticationError` -- `MissingApiKey` / `InvalidApiKey` / `KeyringError` / `RequestError`
 - `ConfigDecryptionError` -- `AuthTagMismatch` / `InvalidUtf8` / `KeyringError` / `KdfError`
 - `ModuleExecutionError` -- `NonZeroExit` / `Timeout` / `OutputParseFailed` / `SpawnFailed`
+- `AuditLogError` -- audit-log write failures (SEC-04)
 
 ## Development
 

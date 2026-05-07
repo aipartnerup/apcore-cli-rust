@@ -244,6 +244,8 @@ fn build_cli_command(
     extensions_dir: Option<String>,
     prog_name: Option<String>,
     validate: bool,
+    host_version: Option<String>,
+    host_description: Option<String>,
 ) -> clap::Command {
     let name = resolve_prog_name(prog_name);
 
@@ -264,13 +266,31 @@ fn build_cli_command(
         }
     }
 
+    // Issues #18 / #19 (Rust parity): the version and top-level description
+    // are now parameterized via host_version / host_description so that a
+    // future re-introduction of the embedding API (removed in 0.7.0
+    // D9-001/D9-002) can wire host-app values through without changing the
+    // builder. Standalone bin defaults: SDK package version + a neutral
+    // `f"{name} CLI"` description (matches the TS/Python debranded surface).
+    //
+    // Issue #18 opt-in semantics: `--version` is only registered when the
+    // host explicitly passes a `host_version`. The standalone binary at the
+    // bottom of main.rs passes `Some(env!("CARGO_PKG_VERSION").to_string())`
+    // so it still has a `--version`; embedded callers that omit
+    // `host_version` will NOT leak the SDK's own package version through
+    // the root command. Mirrors `apcore-cli-python.create_cli(version=)`
+    // and `apcore-cli-typescript.CreateCliOptions.version`.
+    let resolved_description = host_description.unwrap_or_else(|| format!("{} CLI", name));
+
     // Build root command.
-    let mut cmd = clap::Command::new(name.clone())
-        .version(env!("CARGO_PKG_VERSION"))
-        .long_version(format!("{}, version {}", name, env!("CARGO_PKG_VERSION")))
-        .about("CLI adapter for the apcore module ecosystem.")
+    let mut cmd = clap::Command::new(name.clone()).about(resolved_description);
+    if let Some(v) = host_version {
+        let long_version = format!("{}, version {}", name, v);
+        cmd = cmd.version(v).long_version(long_version);
+    }
+    cmd = cmd
         .after_help(
-            "Use --help --verbose to show all options (including built-in apcore options).\n\
+            "Use --help --verbose to show all options (including built-in options).\n\
              Use --help --man to display a formatted man page.",
         )
         .allow_external_subcommands(true)
@@ -289,7 +309,7 @@ fn build_cli_command(
                 .action(clap::ArgAction::SetTrue)
                 .help(
                     "Show all options in help output \
-                     (including built-in apcore options).",
+                     (including built-in options).",
                 ),
         )
         .arg(
@@ -322,10 +342,20 @@ fn build_cli_command(
         None
     };
     // Binary is always standalone — registry is NOT injected.
+    //
+    // TODO(rust-embedding-api): when create_cli is moved to the library API
+    // per the D9 redesign, thread `registry_injected` through the new
+    // signature instead of hardcoding `false` here. Python factory.py:148
+    // and TypeScript main.ts:366 derive this from
+    // `registry is not None or app is not None`. Hardcoding `false` is
+    // currently correct for the BIN-only standalone binary (no embedding
+    // API exists), but it is a latent FE-13 contract hole that will
+    // silently violate the auto-detect contract once embedding is
+    // reintroduced.
     let apcli_cfg = apcore_cli::ApcliGroup::from_yaml(yaml_val, /*registry_injected*/ false);
 
     let apcli_group = clap::Command::new("apcli")
-        .about("Built-in apcore-cli commands.")
+        .about("Built-in commands.")
         .hide(!apcli_cfg.is_group_visible());
     let apcli_group = apcore_cli::register_apcli_subcommands(apcli_group, &apcli_cfg, &name);
     cmd = cmd.subcommand(apcli_group);
@@ -394,8 +424,46 @@ fn apply_discovery_flags(cmd: clap::Command, standalone: bool) -> clap::Command 
 /// * `extensions_dir` — path to the extensions directory, validated here.
 ///   Exits 47 if provided but does not exist.
 /// * `prog_name` — override the program name shown in help text.
+///
+/// **No `--version` is registered** — embedders calling this factory do not
+/// leak the SDK's own `CARGO_PKG_VERSION` through their CLI's `--version`
+/// flag (issue #18 opt-in semantics, parity with Python `create_cli` and
+/// TypeScript `createCli` which only register `--version` when the host
+/// passes one). Use [`create_cli_with`] and pass `Some(host_version)` to
+/// register `--version`.
 pub fn create_cli(extensions_dir: Option<String>, prog_name: Option<String>) -> clap::Command {
-    build_cli_command(extensions_dir, prog_name, true)
+    build_cli_command(extensions_dir, prog_name, true, None, None)
+}
+
+/// Variant of [`create_cli`] that lets a host application override the
+/// `--version` string and the top-level `--help` description (issues #18 +
+/// #19, Rust parity with `apcore-cli-typescript` `CreateCliOptions.version` /
+/// `description` and `apcore-cli-python` `create_cli(version=, description=)`).
+///
+/// * `host_version` — when `Some(v)`, `-V/--version` prints `v` instead of the
+///   SDK's own `CARGO_PKG_VERSION`. The standalone `apcore-cli` binary keeps
+///   the SDK version because it does not pass through this surface.
+/// * `host_description` — when `Some(d)`, the top-level `--help` "About" line
+///   shows `d` instead of the default `"<prog_name> CLI"`.
+///
+/// The Rust embedding API was removed in v0.7.0 (D9-001 / D9-002). This
+/// helper is the parameterized seam that a future re-introduced embedding
+/// API will route through; it is exported now so that downstream Rust hosts
+/// experimenting with `apcore-cli` as a library do not have to fork the
+/// crate to debrand their CLI.
+pub fn create_cli_with(
+    extensions_dir: Option<String>,
+    prog_name: Option<String>,
+    host_version: Option<String>,
+    host_description: Option<String>,
+) -> clap::Command {
+    build_cli_command(
+        extensions_dir,
+        prog_name,
+        true,
+        host_version,
+        host_description,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -541,7 +609,7 @@ fn handle_completion(sub_m: &clap::ArgMatches, prog_name: &str) {
     let shell = *sub_m
         .get_one::<clap_complete::Shell>("shell")
         .expect("shell is required");
-    let mut cmd = build_cli_command(None, Some(prog_name.to_string()), false);
+    let mut cmd = build_cli_command(None, Some(prog_name.to_string()), false, None, None);
     let output = apcore_cli::shell::cmd_completion(shell, prog_name, &mut cmd);
     print!("{output}");
     std::process::exit(0);
@@ -569,7 +637,7 @@ async fn main() {
         && raw_args.iter().any(|a| a == "--help" || a == "-h")
     {
         let name = resolve_prog_name(None);
-        let cmd = build_cli_command(None, Some(name.clone()), false);
+        let cmd = build_cli_command(None, Some(name.clone()), false, None, None);
         let roff = apcore_cli::shell::build_program_man_page(
             &cmd,
             &name,
@@ -601,8 +669,17 @@ async fn main() {
     let default_level = resolve_log_level(None);
     init_tracing(&default_level);
 
-    // Build and parse CLI.
-    let cmd = create_cli(extensions_dir, None);
+    // Build and parse CLI. The standalone binary explicitly passes its
+    // SDK package version through `create_cli_with` so `--version` is
+    // wired up. `create_cli` (the no-version factory) is reserved for
+    // embedders that do not want to leak the SDK's own version through
+    // their host CLI's `--version` flag (issue #18 opt-in semantics).
+    let cmd = create_cli_with(
+        extensions_dir,
+        None,
+        Some(env!("CARGO_PKG_VERSION").to_string()),
+        None,
+    );
     let matches = cmd.get_matches();
 
     // Optionally reload log filter from --log-level flag.
@@ -668,8 +745,26 @@ async fn main() {
     }
 
     // Build the apcore executor from the discovered registry.
-    let apcore_executor =
+    let mut apcore_executor =
         apcore::Executor::new(std::sync::Arc::new(registry), apcore::Config::default());
+
+    // A-D-002 fix: wire the CLI approval handler into the apcore executor so
+    // any approval gate raised inside the pipeline (e.g. via `approval_gate`
+    // middleware on a `requires_approval: true` module) consults the same
+    // TTY-aware prompt that `dispatch_module` uses on the direct path.
+    // Mirrors Python `factory.py:322 → executor.set_approval_handler(...)`
+    // and TypeScript `main.ts:357 → executor.setApprovalHandler(...)`.
+    //
+    // Timeout defaults to `DEFAULT_APPROVAL_TIMEOUT_SECS` (60s); per-call
+    // overrides via `--approval-timeout` continue to flow through the
+    // direct-path `check_approval_with_timeout` call in dispatch_module.
+    // `auto_approve` is `false` here because the apcore-side handler runs
+    // under module dispatch, where the `--yes` bypass has already been
+    // honoured by the direct path before the executor is invoked.
+    apcore_executor.set_approval_handler(Box::new(apcore_cli::CliApprovalHandler::new(
+        false,
+        apcore_cli::approval::DEFAULT_APPROVAL_TIMEOUT_SECS,
+    )));
 
     // Build the provider from a second registry for list/describe.
     // The filesystem scan is fast (local directory) and the discoverer
@@ -757,7 +852,8 @@ async fn main() {
                 apcore_cli::strategy::dispatch_describe_pipeline(sub_m);
             }
             _ => {
-                let _ = build_cli_command(None, Some(prog_name.clone()), false).print_help();
+                let _ = build_cli_command(None, Some(prog_name.clone()), false, None, None)
+                    .print_help();
                 println!();
                 std::process::exit(0);
             }
@@ -822,7 +918,7 @@ async fn main() {
             let command_name = sub_m
                 .get_one::<String>("command")
                 .expect("command is required");
-            let cmd = build_cli_command(None, Some(prog_name.clone()), false);
+            let cmd = build_cli_command(None, Some(prog_name.clone()), false, None, None);
             match apcore_cli::shell::cmd_man(
                 command_name,
                 &cmd,
@@ -893,7 +989,8 @@ async fn main() {
         }
         None => {
             // No subcommand: print the real CLI tree (matches the apcli-_ arm).
-            let _ = build_cli_command(None, Some(prog_name.clone()), false).print_help();
+            let _ =
+                build_cli_command(None, Some(prog_name.clone()), false, None, None).print_help();
             println!();
             std::process::exit(0);
         }
@@ -1044,7 +1141,7 @@ mod tests {
 
     #[test]
     fn test_exec_subcommand_exists() {
-        let cmd = build_cli_command(None, None, false);
+        let cmd = build_cli_command(None, None, false, None, None);
         let exec = cmd.get_subcommands().find(|c| c.get_name() == "exec");
         assert!(
             exec.is_some(),
@@ -1055,7 +1152,7 @@ mod tests {
     #[test]
     fn test_exec_subcommand_has_required_module_id() {
         // FE-13: `exec` with its full arg surface lives under `apcli`.
-        let cmd = build_cli_command(None, None, false);
+        let cmd = build_cli_command(None, None, false, None, None);
         let apcli = cmd
             .get_subcommands()
             .find(|c| c.get_name() == "apcli")
@@ -1075,7 +1172,7 @@ mod tests {
     #[test]
     fn test_exec_subcommand_has_optional_flags() {
         // FE-13: `exec` with its full arg surface lives under `apcli`.
-        let cmd = build_cli_command(None, None, false);
+        let cmd = build_cli_command(None, None, false, None, None);
         let apcli = cmd
             .get_subcommands()
             .find(|c| c.get_name() == "apcli")
@@ -1102,7 +1199,7 @@ mod tests {
     #[test]
     fn test_exec_subcommand_parses_valid_args() {
         // FE-13: canonical path is now `apcli exec <module_id>`.
-        let cmd = build_cli_command(None, None, false);
+        let cmd = build_cli_command(None, None, false, None, None);
         let matches = cmd.try_get_matches_from(vec![
             "apcore-cli",
             "apcli",
@@ -1138,5 +1235,45 @@ mod tests {
         assert!(LOG_LEVELS.contains(&"INFO"));
         assert!(LOG_LEVELS.contains(&"WARNING"));
         assert!(LOG_LEVELS.contains(&"ERROR"));
+    }
+
+    // --- A-D-008: --version is opt-in, not auto-registered ---
+
+    #[test]
+    fn test_create_cli_does_not_register_version_when_host_version_absent() {
+        // Issue #18 opt-in semantics (Python/TS parity): when no host version
+        // is supplied, the SDK must NOT register `--version` — embedders
+        // would otherwise leak the apcore-cli SDK's own CARGO_PKG_VERSION
+        // through their host CLI's `--version` flag. Use the
+        // validate=false build path so the test does not require an
+        // actual `./extensions` directory.
+        let cmd = build_cli_command(None, None, false, None, None);
+        assert!(
+            cmd.get_version().is_none(),
+            "build_cli_command with host_version=None must not register --version (issue #18)"
+        );
+    }
+
+    #[test]
+    fn test_create_cli_with_registers_host_version_when_provided() {
+        // The opt-in surface: when the host supplies a version, --version is
+        // wired and reflects the host's value (not the SDK's).
+        let cmd = build_cli_command(None, None, false, Some("1.2.3".to_string()), None);
+        assert_eq!(
+            cmd.get_version(),
+            Some("1.2.3"),
+            "build_cli_command must wire host_version to --version"
+        );
+    }
+
+    #[test]
+    fn test_create_cli_with_omitting_host_version_skips_version() {
+        // Even on the `_with` factory, omitting host_version means no
+        // --version is registered.
+        let cmd = build_cli_command(None, None, false, None, None);
+        assert!(
+            cmd.get_version().is_none(),
+            "build_cli_command with host_version=None must not register --version"
+        );
     }
 }

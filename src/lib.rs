@@ -23,6 +23,7 @@ pub mod security;
 pub mod shell;
 pub mod strategy;
 pub mod system_cmd;
+pub mod system_usage;
 pub mod validate;
 
 // Internal sandbox runner — not part of the public API surface, but must be
@@ -152,13 +153,13 @@ pub use approval::{
 };
 
 // Built-in command group (FE-13)
-pub use builtin_group::{ApcliConfig, ApcliGroup, ApcliMode};
+pub use builtin_group::{ApcliConfig, ApcliGroup, ApcliGroupError, ApcliMode};
 
 // Core dispatcher (FE-01)
 pub use cli::{
     build_module_command, build_module_command_with_limit, collect_input,
     collect_input_from_reader, dispatch_module, get_docs_url, is_verbose_help, set_audit_logger,
-    set_docs_url, set_executables, set_verbose_help, validate_module_id,
+    set_docs_url, set_executables, set_verbose_help, validate_module_id, CliError,
 };
 
 // FE-13 retires `cli::BUILTIN_COMMANDS`. Downstream consumers that pinned to
@@ -171,8 +172,9 @@ pub use config::ConfigResolver;
 
 // Discovery + Registry providers (FE-03 / FE-09)
 pub use discovery::{
-    cmd_describe, cmd_list, cmd_list_enhanced, register_discovery_commands, ApCoreRegistryProvider,
-    DiscoveryError, ListOptions, RegistryProvider,
+    cmd_describe, cmd_list, cmd_list_enhanced, register_describe_command,
+    register_discovery_commands, register_exec_command, register_list_command,
+    ApCoreRegistryProvider, DiscoveryError, ListOptions, RegistryProvider,
 };
 
 // Test utilities — available behind the `test-support` feature.
@@ -192,7 +194,7 @@ pub use exposure::ExposureFilter;
 pub use fs_discoverer::FsDiscoverer;
 
 // Init command (FE-10)
-pub use init_cmd::{handle_init, init_command};
+pub use init_cmd::{handle_init, init_command, register_init_command};
 
 // Output formatting (FE-08)
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
@@ -209,8 +211,8 @@ pub use schema_parser::{
 
 // Security primitives (SEC-01..04)
 pub use security::{
-    AuditLogger, AuthProvider, AuthenticationError, ConfigDecryptionError, ConfigEncryptor,
-    ModuleExecutionError, ModuleNotFoundError, Sandbox, SchemaValidationError,
+    AuditLogError, AuditLogger, AuthProvider, AuthenticationError, ConfigDecryptionError,
+    ConfigEncryptor, ModuleExecutionError, ModuleNotFoundError, Sandbox, SchemaValidationError,
 };
 
 // Shell integration (FE-06): completion + man page builders.
@@ -223,12 +225,26 @@ pub use security::{
 // (D9-003) — embedders should call register_completion_command and
 // register_man_command directly.
 pub use shell::{
-    build_program_man_page, cmd_completion, cmd_man, completion_command, has_man_flag, ShellError,
+    build_program_man_page, cmd_completion, cmd_man, completion_command, has_man_flag,
+    register_completion_command, register_man_command, ShellError,
 };
 
 // FE-11 system commands constant (used by downstream consumers to inspect
 // which command names are reserved by the system-management subset).
 pub use system_cmd::SYSTEM_COMMANDS;
+
+// Per-subcommand registrars (FE-13). Demoted from `pub(crate)` to `pub` so
+// downstream embedders that compose their own root command tree can attach
+// individual built-in subcommands without re-implementing them. The
+// `register_apcli_subcommands` umbrella above is the high-level composer;
+// these entries are the building blocks Python/TS expose as
+// `register_*_command` factories on the public API.
+pub use strategy::register_pipeline_command;
+pub use system_cmd::{
+    register_config_command, register_disable_command, register_enable_command,
+    register_health_command, register_reload_command, register_usage_command,
+};
+pub use validate::register_validate_command;
 
 #[cfg(test)]
 mod tests {
